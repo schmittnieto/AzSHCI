@@ -37,7 +37,7 @@ jobs:
         working-directory: blog_destination
         run: |
           git config user.name "schmittnieto"
-          git config user.email "tu-email@ejemplo.com"
+          git config user.email "cristian@schmitt-nieto.com"
           git add .
           git commit -m "Update files from AzSHCI repository"
           git push origin main
