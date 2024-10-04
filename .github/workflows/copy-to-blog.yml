@@ -11,26 +11,24 @@ jobs:
 
     steps:
       - name: Checkout Source Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4  # Actualizamos a la última versión
+
+      - name: Checkout Destination Repository
+        uses: actions/checkout@v4  # Actualizamos a la última versión
         with:
-          persist-credentials: false  # Deshabilita las credenciales para evitar conflictos
+          repository: schmittnieto/schmittnieto.github.io
+          path: blog_repo
+          token: ${{ secrets.GH_PAT }}
 
-      - name: Set up Git
-        run: |
-          git config --global user.name "schmittnieto"
-          git config --global user.email "cristian@schmitt-nieto.com"
-
-      - name: Clone Destination Repository
-        run: |
-          git clone https://schmittnieto:${{ secrets.GH_PAT }}@github.com/schmittnieto/schmittnieto.github.io.git
-          
       - name: Copy Files
         run: |
-          rsync -av --exclude='.git' ./ schmittnieto.github.io/assets/post/2024-10-04-Azure-Stack-HCI-Demolab/
+          rsync -av --exclude='.git' ./ blog_repo/assets/post/2024-10-04-Azure-Stack-HCI-Demolab/ --exclude=blog_repo
           
       - name: Commit and Push Changes
+        working-directory: blog_repo
         run: |
-          cd schmittnieto.github.io
+          git config user.name "schmittnieto"
+          git config user.email "tu-email@ejemplo.com"
           git add .
           git commit -m "Update files from AzSHCI repository"
           git push origin main
