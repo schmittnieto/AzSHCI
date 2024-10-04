@@ -1,0 +1,36 @@
+name: Copy Files to Blog Repository
+
+on:
+  push:
+    branches:
+      - main  # O la rama que desees monitorizar
+
+jobs:
+  copy-files:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Repository
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: false  # Deshabilita las credenciales para evitar conflictos
+
+      - name: Set up Git
+        run: |
+          git config --global user.name "schmittnieto"
+          git config --global user.email "cristian@schmitt-nieto.com"
+
+      - name: Clone Destination Repository
+        run: |
+          git clone https://schmittnieto:${{ secrets.GH_PAT }}@github.com/schmittnieto/schmittnieto.github.io.git
+          
+      - name: Copy Files
+        run: |
+          rsync -av --exclude='.git' ./ schmittnieto.github.io/assets/post/2024-10-04-Azure-Stack-HCI-Demolab/
+          
+      - name: Commit and Push Changes
+        run: |
+          cd schmittnieto.github.io
+          git add .
+          git commit -m "Update files from AzSHCI repository"
+          git push origin main
