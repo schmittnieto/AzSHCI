@@ -144,7 +144,7 @@ AzSHCI/
 
    - **Configure Domain Controller:**
 
-     Before running `01_DC.ps1`, ensure the VM is powered on and Windows Server is installed (no need to install any roles). Add your local administrator credentials to the `$defaultUser` and `$defaultPwd` variables in the script.
+     Before running `01_DC.ps1`, ensure the VM is powered on and Windows Server is installed (no need to install any roles). Add your local administrator credentials to the `$defaultUser` and `$defaultPwd` variables in the script. Then you can run the script:
 
      ```
      .\01_DC.ps1
@@ -154,7 +154,7 @@ AzSHCI/
 
    - **Configure Cluster Node:**
 
-     After successfully running `01_DC.ps1`, proceed to install the cluster node. Update the `$defaultUser` and `$defaultPwd` variables in `02_Cluster.ps1` with your local administrator credentials.
+     After successfully running `01_DC.ps1`, proceed to install the cluster node. After the installation, update the `$defaultUser` and `$defaultPwd` variables in `02_Cluster.ps1` with your local administrator credentials. Then you can run the script:
 
      ```
      .\02_Cluster.ps1
