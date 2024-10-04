@@ -19,7 +19,7 @@
     - Installs necessary modules and creates Azure Stack HCI AD objects.
 
 .NOTES
-    - Designed by Cristian Schmitt Nieto. For more information and usage, visit: https://schmitt-nieto.com
+    - Designed by Cristian Schmitt Nieto. For more information and usage, visit: https://schmitt-nieto.com/blog/azure-stack-hci-demolab/
     - Run this script with administrative privileges.
     - Ensure the Execution Policy allows the script to run. To set the execution policy, you can run:
       Set-ExecutionPolicy RemoteSigned -Scope CurrentUser

@@ -14,7 +14,7 @@
     - Configures networking, storage, and security settings for the VMs.
 
 .NOTES
-    - Designed by Cristian Schmitt Nieto. For more information and usage, visit: https://schmitt-nieto.com
+    - Designed by Cristian Schmitt Nieto. For more information and usage, visit: https://schmitt-nieto.com/blog/azure-stack-hci-demolab/
     - Run this script with administrative privileges.
     - Ensure the ISO paths are correct before execution.
     - Execution Policy may need to be set to allow the script to run. To set the execution policy, you can run:
