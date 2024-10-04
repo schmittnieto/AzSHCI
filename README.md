@@ -1,6 +1,6 @@
 # AzSHCI - Azure Stack HCI Deployment Scripts
 
-**For detailed instructions on how to execute these scripts, please visit: [schmitt-nieto.com](https://schmitt-nieto.com)**
+**For detailed instructions on how to execute these scripts, please visit: [schmitt-nieto.com/blog/azure-stack-hci-demolab/](https://schmitt-nieto.com/blog/azure-stack-hci-demolab/)**
 
 Welcome to the **AzSHCI** repository! This collection of PowerShell scripts is designed to simplify and streamline the deployment of **Azure Stack HCI** in testing and lab environments. Whether you're an IT professional, system administrator, or cloud enthusiast, these scripts will help you set up a functional Azure Stack HCI environment quickly and efficiently, without the need for extensive physical infrastructure.
 
