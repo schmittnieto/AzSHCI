@@ -22,7 +22,7 @@ jobs:
 
       - name: Copy Files
         run: |
-          rsync -av --exclude='.git' ./ blog_repo/assets/post/2024-10-04-Azure-Stack-HCI-Demolab/ --exclude=blog_repo
+          rsync -av --exclude='.git' ./ blog_repo/assets/repo/AzSHCI --exclude=blog_repo
           
       - name: Commit and Push Changes
         working-directory: blog_repo
