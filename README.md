@@ -2,7 +2,7 @@
 <p align="center">
   <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://img.shields.io/github/languages/top/schmittnieto/AzSHCI.svg"></a>
   <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://img.shields.io/github/languages/code-size/schmittnieto/AzSHCI.svg"></a>
-  <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://img.shields.io/github/downloads/schmittnieto/AzSHCI/total.svg"></a><br>
+  <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://img.shields.io/github/v/release/schmittnieto/AzSHCI"></a><br>
 </p>
 
 **For detailed instructions on how to execute these scripts, please visit: [schmitt-nieto.com/blog/azure-stack-hci-demolab/](https://schmitt-nieto.com/blog/azure-stack-hci-demolab/)**
