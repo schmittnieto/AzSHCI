@@ -29,7 +29,7 @@
 
 # Define credentials and variables
 $defaultUser = "Administrator"
-$defaultPwd = "D0m41nC0ntr0LL3r"
+$defaultPwd = "Start#1234"
 $DefaultSecuredPassword = ConvertTo-SecureString $defaultPwd -AsPlainText -Force
 $DefaultCredentials = New-Object System.Management.Automation.PSCredential ($defaultUser, $DefaultSecuredPassword)
 

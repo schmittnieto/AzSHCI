@@ -1,44 +1,35 @@
-# 03_TroubleshootingExtensions.ps1
-# Troubleshooting Azure Connected Machine Extensions for ARC VMs
+# 20_SSHRDPArcVM.ps1
+# Script to search ARC VMs in a Resource Group, ensure SSH extension is installed, and establish RDP over SSH connection
 
 <#
 .SYNOPSIS
-    Troubleshoots and manages Azure Connected Machine extensions for ARC VMs.
+    Searches for ARC VMs in a specified Resource Group, ensures the SSH extension is installed, and establishes an SSH connection.
 
 .DESCRIPTION
     This script performs the following tasks:
-    - Installs the Az.Compute and Az.StackHCI modules if not already installed.
-    - Connects to Azure using device code authentication and allows the user to select a Subscription and Resource Group.
-    - Retrieves ARC VMs from Azure using Az.StackHCI, filtering for ARC Machines with CloudMetadataProvider "AzSHCI".
-    - Validates that required Azure Connected Machine extensions are installed.
-    - Fixes any failed extensions by removing locks, deleting, and reinstalling them.
-    - Adds any missing extensions based on a predefined list.
+    - Checks and installs Azure PowerShell modules Az.Compute and Az.ConnectedMachine if not installed.
+    - Checks and installs Azure CLI and its SSH extension if not installed on the local machine.
+    - Connects to Azure using device code authentication.
+    - Allows the user to select a Subscription and Resource Group.
+    - Retrieves ARC VMs from the selected Resource Group.
+    - Checks if the selected ARC VM has the SSH extension installed; if not, installs it.
+    - Establishes an SSH connection to the ARC VM using the specified local user.
 
 .NOTES
-    - Based on Jaromir´s aproach: https://github.com/DellGEOS/AzureStackHOLs/tree/main/tips%26tricks/05-FixExtensions
-    - Designed by Cristian Schmitt Nieto. For more information and usage, visit: https://schmitt-nieto.com/blog/azure-stack-hci-demolab/
-    - Run this script with administrative privileges.
-    - Ensure the Execution Policy allows the script to run. To set the execution policy, you can run:
+    - Designed by Cristian Schmitt Nieto 
+    - Based on Alexnder´s aproach: https://www.linkedin.com/pulse/azurearc-using-rdp-ssh-alexander-ortha-7sxae/
+    - Ensure the script is run with administrative privileges.
+    - Set the Execution Policy to allow script execution:
       Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 #>
 
 #region Variables
 
-# Extension Settings
+# Location for Azure resources
 $Location = "westeurope"
 
-$Settings = @{ 
-    "CloudName" = "AzureCloud"; 
-    "RegionName" = $Location; 
-    "DeviceType" = "AzureEdge" 
-}
-
-$ExtensionList = @(
-    @{ Name = "AzureEdgeTelemetryAndDiagnostics"; Publisher = "Microsoft.AzureStack.Observability"; MachineExtensionType = "TelemetryAndDiagnostics" },
-    @{ Name = "AzureEdgeDeviceManagement"; Publisher = "Microsoft.Edge"; MachineExtensionType = "DeviceManagementExtension" },
-    @{ Name = "AzureEdgeLifecycleManager"; Publisher = "Microsoft.AzureStack.Orchestration"; MachineExtensionType = "LcmController" },
-    @{ Name = "AzureEdgeRemoteSupport"; Publisher = "Microsoft.AzureStack.Observability"; MachineExtensionType = "EdgeRemoteSupport" }
-)
+# Local User for SSH Connection (Set this manually)
+$LocalUser = "vmadmin" # <-- Replace 'username' with your actual local user
 
 # Total number of steps for progress calculation
 $totalSteps = 9
@@ -78,6 +69,7 @@ function Update-ProgressBar {
     )
 
     $percent = [math]::Round(($CurrentStep / $TotalSteps) * 100)
+    if ($percent -gt 100) { $percent = 100 }
     Write-Progress -Id 1 -Activity "Overall Progress" -Status $StatusMessage -PercentComplete $percent
 }
 
@@ -97,19 +89,55 @@ function Install-AzComputeModule {
     }
 }
 
-# Function to Install Az.StackHCI Module if Not Installed
-function Install-AzStackHCIModule {
-    if (-not (Get-Module -ListAvailable -Name Az.StackHCI)) {
-        Write-Message "Az.StackHCI module not found. Installing..." -Type "Info"
+# Function to Install Az.ConnectedMachine Module if Not Installed
+function Install-AzConnectedMachineModule {
+    if (-not (Get-Module -ListAvailable -Name Az.ConnectedMachine)) {
+        Write-Message "Az.ConnectedMachine module not found. Installing..." -Type "Info"
         try {
-            Install-Module -Name Az.StackHCI -Repository PSGallery -Force -AllowClobber -ErrorAction Stop
-            Write-Message "Az.StackHCI module installed successfully." -Type "Success"
+            Install-Module -Name Az.ConnectedMachine -Repository PSGallery -Force -AllowClobber -ErrorAction Stop
+            Write-Message "Az.ConnectedMachine module installed successfully." -Type "Success"
         } catch {
-            Write-Message "Failed to install Az.StackHCI module. Error: $_" -Type "Error"
+            Write-Message "Failed to install Az.ConnectedMachine module. Error: $_" -Type "Error"
             exit 1
         }
     } else {
-        Write-Message "Az.StackHCI module is already installed." -Type "Info"
+        Write-Message "Az.ConnectedMachine module is already installed." -Type "Info"
+    }
+}
+
+# Function to Check and Install Azure CLI
+function Ensure-AzCLI {
+    if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
+        Write-Message "Azure CLI not found. Installing..." -Type "Info"
+        try {
+            # Download and install Azure CLI
+            Invoke-WebRequest -Uri https://aka.ms/installazurecliwindows -OutFile "$env:TEMP\AzureCLI.msi" -UseBasicParsing
+            Start-Process msiexec.exe -Wait -ArgumentList "/I $env:TEMP\AzureCLI.msi /quiet"
+            Remove-Item "$env:TEMP\AzureCLI.msi" -Force
+            Write-Message "Azure CLI installed successfully." -Type "Success"
+        } catch {
+            Write-Message "Failed to install Azure CLI. Error: $_" -Type "Error"
+            exit 1
+        }
+    } else {
+        Write-Message "Azure CLI is already installed." -Type "Info"
+    }
+}
+
+# Function to Install SSH ARC Extension for Azure CLI
+function Ensure-AzureCLISshExtension {
+    $azExtensions = az extension list --query "[].name" -o tsv
+    if ($azExtensions -notcontains "ssh") {
+        Write-Message "Azure CLI SSH extension not found. Installing..." -Type "Info"
+        try {
+            az extension add --name ssh --only-show-errors
+            Write-Message "Azure CLI SSH extension installed successfully." -Type "Success"
+        } catch {
+            Write-Message "Failed to install Azure CLI SSH extension. Error: $_" -Type "Error"
+            exit 1
+        }
+    } else {
+        Write-Message "Azure CLI SSH extension is already installed." -Type "Info"
     }
 }
 
@@ -151,7 +179,7 @@ function Get-Option {
     return $selection
 }
 
-# Function to Retrieve ARC VMs from Azure using Az.StackHCI
+# Function to Retrieve ARC VMs from Azure using Az.ConnectedMachine
 function Get-ARCVMsFromAzure {
     param(
         [string]$SubscriptionId,
@@ -168,10 +196,10 @@ function Get-ARCVMsFromAzure {
         }
 
         # Filter connected machines where CloudMetadataProvider is "AzSHCI"
-        $ARCVMs = $connectedMachines | Where-Object { $_.CloudMetadataProvider -eq "AzSHCI" }
+        $ARCVMs = $connectedMachines | Where-Object { $_.CloudMetadataProvider -ne "AzSHCI" }
 
         if ($ARCVMs.Count -eq 0) {
-            Write-Message "No ARC VMs (Machines with CloudMetadataProvider 'AzSHCI') found in resource group '$ResourceGroupName'." -Type "Warning"
+            Write-Message "No ARC VMs found in resource group '$ResourceGroupName'." -Type "Warning"
         } else {
             Write-Message "Retrieved $($ARCVMs.Count) ARC VM(s) from Azure." -Type "Success"
         }
@@ -194,7 +222,7 @@ function Test-Extensions {
     foreach ($ARCVM in $ARCVMs) {
         try {
             $extensions = Get-AzConnectedMachineExtension -ResourceGroupName $ResourceGroupName -MachineName $ARCVM.Name -ErrorAction Stop
-            $Extensions += $extensions
+            $Extensions += @($extensions) # Ensure $extensions is treated as an array
         } catch {
             Write-Message "Failed to retrieve extensions for ARC VM '$($ARCVM.Name)'. Error: $_" -Type "Error"
             exit 1
@@ -202,6 +230,13 @@ function Test-Extensions {
     }
 
     return $Extensions
+}
+
+# Function to Ensure Local Environment has Azure CLI and SSH Extension
+function Ensure-LocalEnvironment {
+    Write-Message "Ensuring local environment has Azure CLI and SSH extension installed..." -Type "Info"
+    Ensure-AzCLI
+    Ensure-AzureCLISshExtension
 }
 
 #endregion
@@ -219,18 +254,29 @@ try {
     exit 1
 }
 
-# Step 2: Install Az.StackHCI Module
+# Step 2: Install Az.ConnectedMachine Module
 $currentStep++
-Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Ensuring Az.StackHCI module is installed..."
-Write-Message "Checking for Az.StackHCI module..." -Type "Info"
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Ensuring Az.ConnectedMachine module is installed..."
+Write-Message "Checking for Az.ConnectedMachine module..." -Type "Info"
 try {
-    Install-AzStackHCIModule
+    Install-AzConnectedMachineModule
 } catch {
-    Write-Message "An error occurred while ensuring Az.StackHCI module is installed. Error: $_" -Type "Error"
+    Write-Message "An error occurred while ensuring Az.ConnectedMachine module is installed. Error: $_" -Type "Error"
     exit 1
 }
 
-# Step 3: Connect to Azure using Device Code Authentication
+# Step 3: Ensure Local Environment
+$currentStep++
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Ensuring local environment is set up..."
+Write-Message "Checking local environment for Azure CLI and SSH extension..." -Type "Info"
+try {
+    Ensure-LocalEnvironment
+} catch {
+    Write-Message "An error occurred while setting up the local environment. Error: $_" -Type "Error"
+    exit 1
+}
+
+# Step 4: Connect to Azure using Device Code Authentication
 $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Connecting to Azure using device code authentication..."
 Write-Message "Connecting to Azure..." -Type "Info"
@@ -242,7 +288,7 @@ try {
     exit 1
 }
 
-# Step 4: Select Subscription
+# Step 5: Select Subscription
 $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Selecting Azure Subscription..."
 Write-Message "Retrieving available Azure Subscriptions..." -Type "Info"
@@ -257,7 +303,7 @@ try {
     exit 1
 }
 
-# Step 5: Select Resource Group
+# Step 6: Select Resource Group
 $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Selecting Resource Group..."
 Write-Message "Retrieving available Resource Groups in Subscription '$($selectedSubscription.Subscription.Name)'..." -Type "Info"
@@ -270,7 +316,7 @@ try {
     exit 1
 }
 
-# Step 6: Retrieve ARC VMs from Azure
+# Step 7: Retrieve ARC VMs from Azure
 $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Retrieving ARC VMs from Azure..."
 Write-Message "Retrieving ARC VMs from Azure..." -Type "Info"
@@ -285,7 +331,7 @@ try {
     exit 1
 }
 
-# Step 7: Select ARC VM
+# Step 8: Select ARC VM
 $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Selecting ARC VM..."
 Write-Message "Selecting an ARC VM..." -Type "Info"
@@ -303,7 +349,7 @@ try {
     # Export the temporary list to a temporary file
     $tempList | Export-Clixml -Path "$env:TEMP\ARCVMList.xml"
 
-    # Use Get-Option by importing the temporary list
+    # Function to allow selection from the imported list
     function Get-Option-FromList {
         param (
             [string]$filterproperty
@@ -354,85 +400,46 @@ try {
     exit 1
 }
 
-# Step 8: Validate Installed Extensions
+# Step 9: Validate and Add SSH Extension
 $currentStep++
-Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Validating installed extensions..."
-Write-Message "Validating installed Azure Connected Machine extensions on ARC VM '$($selectedARCVM.Name)'..." -Type "Info"
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Validating SSH extension..."
+Write-Message "Validating SSH extension on ARC VM '$($selectedARCVM.Name)'..." -Type "Info"
 try {
-    $Extensions = Test-Extensions -ARCVMs @($selectedARCVM) -ResourceGroupName $ResourceGroupName
-    Write-Message "Extension validation completed." -Type "Success"
+    $SSHExtension = Get-AzConnectedMachineExtension -ResourceGroupName $ResourceGroupName -MachineName $selectedARCVM.Name | Where-Object { $_.Name -eq "WindowsOpenSSH" }
+
+    if (-not $SSHExtension) {
+        Write-Message "SSH extension not found on '$($selectedARCVM.Name)'. Installing..." -Type "Warning"
+        try {
+            New-AzConnectedMachineExtension -MachineName $selectedARCVM.Name `
+                                            -Name "WindowsOpenSSH" `
+                                            -ResourceGroupName $ResourceGroupName `
+                                            -Location $Location `
+                                            -Publisher "Microsoft.Azure.OpenSSH" `
+                                            -ExtensionType "WindowsOpenSSH" `
+                                            -ErrorAction Stop
+            Write-Message "SSH extension installed successfully on '$($selectedARCVM.Name)'." -Type "Success"
+        } catch {
+            Write-Message "Failed to install SSH extension on '$($selectedARCVM.Name)'. Error: $_" -Type "Error"
+            exit 1
+        }
+    } else {
+        Write-Message "SSH extension is already installed on '$($selectedARCVM.Name)'." -Type "Info"
+    }
+
 } catch {
-    Write-Message "An error occurred during extension validation. Error: $_" -Type "Error"
+    Write-Message "An error occurred during SSH extension validation. Error: $_" -Type "Error"
     exit 1
 }
 
-# Step 9: Fix Failed Extensions and Add Missing Extensions
+# Step 10: Establish SSH Connection
 $currentStep++
-Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Fixing failed extensions and adding missing ones..."
-Write-Message "Identifying and fixing failed extensions, then adding any missing extensions on ARC VM '$($selectedARCVM.Name)'..." -Type "Info"
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Establishing SSH connection..."
+Write-Message "Establishing SSH connection to ARC VM '$($selectedARCVM.Name)'..." -Type "Info"
 try {
-    # Fix failed extensions
-    $FailedExtensions = $Extensions | Where-Object ProvisioningState -eq "Failed"
-
-    if ($FailedExtensions.Count -eq 0) {
-        Write-Message "No failed extensions found." -Type "Success"
-    } else {
-        foreach ($FailedExtension in $FailedExtensions) {
-            $Server = $FailedExtension.MachineName
-            Write-Message "Processing failed extension '$($FailedExtension.Name)' on server '$Server'..." -Type "Info"
-            
-            # Remove lock first
-            $Locks = Get-AzResourceLock -ResourceGroupName $ResourceGroupName | Where-Object ResourceID -like "*HybridCompute/machines/$Server*"
-            if ($Locks.Count -gt 0) {
-                foreach ($lock in $Locks) {
-                    Write-Message "Removing lock '$($lock.Name)' from server '$Server'..." -Type "Info"
-                    Remove-AzResourceLock -LockId $lock.LockId -Force -ErrorAction Stop
-                }
-                Write-Message "Locks removed from server '$Server'." -Type "Success"
-            }
-
-            # Remove the failed extension
-            Write-Message "Removing failed extension '$($FailedExtension.Name)' from server '$Server'..." -Type "Info"
-            Remove-AzConnectedMachineExtension -Name $FailedExtension.Name -ResourceGroupName $FailedExtension.ResourceGroupName -MachineName $Server -ErrorAction Stop
-            Write-Message "Failed extension '$($FailedExtension.Name)' removed from server '$Server'." -Type "Success"
-
-            # Re-add the extension
-            Write-Message "Reinstalling extension '$($FailedExtension.Name)' on server '$Server'..." -Type "Info"
-            New-AzConnectedMachineExtension -Name $FailedExtension.Name `
-                                            -ResourceGroupName $FailedExtension.ResourceGroupName `
-                                            -MachineName $Server `
-                                            -Location $FailedExtension.Location `
-                                            -Publisher $FailedExtension.Publisher `
-                                            -Settings $Settings `
-                                            -ExtensionType $FailedExtension.MachineExtensionType `
-                                            -ErrorAction Stop
-            Write-Message "Extension '$($FailedExtension.Name)' reinstalled on server '$Server'." -Type "Success"
-        }
-    }
-
-    # Add missing extensions
-    Write-Message "Adding any missing Azure Connected Machine extensions..." -Type "Info"
-    foreach ($Extension in $ExtensionList) {
-        # Check if the extension is already installed on the ARC VM
-        $isInstalled = $Extensions | Where-Object { $_.Name -eq $Extension.Name -and $_.MachineName -eq $selectedARCVM.Name }
-
-        if (-not $isInstalled) {
-            Write-Message "Installing missing extension '$($Extension.Name)' on server '$($selectedARCVM.Name)'..." -Type "Info"
-            New-AzConnectedMachineExtension -Name $Extension.Name `
-                                            -ResourceGroupName $ResourceGroupName `
-                                            -MachineName $selectedARCVM.Name `
-                                            -Location $Location `
-                                            -Publisher $Extension.Publisher `
-                                            -Settings $Settings `
-                                            -ExtensionType $Extension.MachineExtensionType `
-                                            -ErrorAction Stop
-            Write-Message "Extension '$($Extension.Name)' installed successfully on server '$($selectedARCVM.Name)'." -Type "Success"
-        } else {
-            Write-Message "Extension '$($Extension.Name)' already installed on server '$($selectedARCVM.Name)'. Skipping." -Type "Info"
-        }
-    }
+    az ssh arc --resource-group $ResourceGroupName --name $selectedARCVM.Name --local-user $LocalUser --rdp
+    Write-Message "SSH connection established successfully." -Type "Success"
 } catch {
-    Write-Message "An error occurred while fixing failed extensions or adding missing ones. Error: $_" -Type "Error"
+    Write-Message "Failed to establish SSH connection. Error: $_" -Type "Error"
     exit 1
 }
 
@@ -440,6 +447,6 @@ try {
 Update-ProgressBar -CurrentStep $totalSteps -TotalSteps $totalSteps -StatusMessage "All tasks completed."
 
 # Final success message
-Write-Message "Azure Connected Machine extensions troubleshooting completed successfully." -Type "Success"
+Write-Message "Azure ARC VM SSH setup and connection completed successfully." -Type "Success"
 
 #endregion
