@@ -19,6 +19,8 @@
     - Run this script with administrative privileges.
     - Ensure the Execution Policy allows the script to run. To set the execution policy, you can run:
       Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+    - Updates:
+        - 2024/11/28: Changing Module Versions and ISO for 2411
 #>
 
 #region Variables
@@ -307,8 +309,8 @@ try {
         # Enable Hyper-V
         Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All -NoRestart -ErrorAction Stop | Out-Null
 
-        # Install additional features
-        Install-WindowsFeature -Name Hyper-V, Failover-Clustering, Data-Center-Bridging, BitLocker, FS-FileServer, RSAT-Clustering-PowerShell, FS-Data-Deduplication -IncludeAllSubFeature -IncludeManagementTools -ErrorAction Stop | Out-Null
+        # Install additional features (Not needed Anymore)
+        # Install-WindowsFeature -Name Hyper-V, Failover-Clustering, Data-Center-Bridging, BitLocker, FS-FileServer, RSAT-Clustering-PowerShell, FS-Data-Deduplication -IncludeAllSubFeature -IncludeManagementTools -ErrorAction Stop | Out-Null
 
         # Restart to apply changes
         Restart-Computer -Force -ErrorAction Stop | Out-Null
@@ -365,9 +367,9 @@ try {
         # Suppress all non-essential outputs
 
         # Install required modules
-        Install-Module Az.Accounts -RequiredVersion 3.0.0 -Force -ErrorAction Stop | Out-Null
-        Install-Module Az.Resources -RequiredVersion 6.12.0 -Force -ErrorAction Stop | Out-Null
-        Install-Module Az.ConnectedMachine -RequiredVersion 0.8.0 -Force -ErrorAction Stop | Out-Null
+        Install-Module Az.Accounts -Force -ErrorAction Stop | Out-Null
+        Install-Module Az.Resources -Force -ErrorAction Stop | Out-Null
+        Install-Module Az.ConnectedMachine -Force -ErrorAction Stop | Out-Null
         Install-Module AzsHCI.ArcInstaller -Force -ErrorAction Stop | Out-Null
 
         Write-Host "Required PowerShell modules installed successfully." -ForegroundColor Green | Out-Null
@@ -387,9 +389,9 @@ try {
     # Connect to Azure and set context
     Connect-AzAccountWithRetry -MaxRetries 5 -DelaySeconds 20  # Increased DelaySeconds to 20
 
-    # Allow user to select Subscription
-    $subscription = Get-Option "Get-AzSubscription" "Name"
-    Set-AzContext -SubscriptionName $subscription -ErrorAction Stop
+    # Allow user to select Subscription (Not needed Anymore)
+    # $subscription = Get-Option "Get-AzSubscription" "Name"
+    # Set-AzContext -SubscriptionName $subscription -ErrorAction Stop
 
     # Allow user to select Resource Group
     $resourceGroup = Get-Option "Get-AzResourceGroup" "ResourceGroupName"
@@ -403,10 +405,10 @@ try {
     $ArcInitScript = @'
 param($SubscriptionID, $ResourceGroupName, $TenantID, $Cloud, $Location, $ARMToken, $AccountId)
 
-# Import modules
-Import-Module Az.Accounts -RequiredVersion 3.0.0 -ErrorAction Stop
-Import-Module Az.Resources -RequiredVersion 6.12.0 -ErrorAction Stop
-Import-Module Az.ConnectedMachine -RequiredVersion 0.8.0 -ErrorAction Stop
+# Import modules (not needed) 
+Import-Module Az.Accounts -ErrorAction Stop
+Import-Module Az.Resources -ErrorAction Stop
+Import-Module Az.ConnectedMachine -ErrorAction Stop
 Import-Module AzsHCI.ArcInstaller -ErrorAction Stop
 
 # Suppress all non-essential outputs
