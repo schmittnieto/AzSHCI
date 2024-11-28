@@ -14,7 +14,7 @@ Welcome to **AzSHCI**! This repository contains PowerShell scripts to help you d
 
 ## Repository Structure
 
-´´´
+```
 AzSHCI/
 ├── scripts/
 │   ├── 01Lab/
@@ -30,7 +30,7 @@ AzSHCI/
 │       ├── 20_SSHRDPArcVM.ps1
 ├── README.md
 └── LICENSE
-´´´
+```
 
 ---
 
@@ -79,21 +79,21 @@ AzSHCI/
 
 1. **Clone the Repository**:
 
-   ´´´
+   ```
    git clone https://github.com/schmittnieto/AzSHCI.git
-   ´´´
+   ```
 
 2. **Navigate to the Scripts Directory**:
 
-   ´´´
+   ```
    cd AzSHCI/scripts/01Lab
-   ´´´
+   ```
 
 3. **Set Execution Policy**:
 
-   ´´´
+   ```
    Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
-   ´´´
+   ```
 
 4. **Modify Script Variables**:
 
@@ -103,33 +103,33 @@ AzSHCI/
 
    - **Initialize Infrastructure and Create VMs**:
 
-     ´´´
+     ```
      .\00_Infra_AzHCI.ps1
-     ´´´
+     ```
 
    - **Configure Domain Controller**:
 
-     ´´´
+     ```
      .\01_DC.ps1
-     ´´´
+     ```
 
    - **Configure Cluster Node**:
 
-     ´´´
+     ```
      .\02_Cluster.ps1
-     ´´´
+     ```
 
    - **Troubleshoot Extensions (if needed)**:
 
-     ´´´
+     ```
      .\03_TroubleshootingExtensions.ps1
-     ´´´
+     ```
 
    - **Cleanup and Offboarding (if needed)**:
 
-     ´´´
+     ```
      .\99_Offboarding.ps1
-     ´´´
+     ```
 
 ### Day 2 Operations
 
@@ -137,15 +137,15 @@ Navigate to `AzSHCI/scripts/02Day2` for the following scripts:
 
 - **10_StartStopAzSHCI.ps1**: Start or stop your Azure Stack HCI infrastructure.
 
-  ´´´
+  ```
   .\10_StartStopAzSHCI.ps1
-  ´´´
+  ```
 
 - **11_ImageBuilderAzSHCI.ps1**: Download and prepare VM images from Azure.
 
-  ´´´
+  ```
   .\11_ImageBuilderAzSHCI.ps1
-  ´´´
+  ```
 
   **Note:** Modify local credential parameters in the script.
 
@@ -155,9 +155,9 @@ Navigate to `AzSHCI/scripts/03VMDeployment`:
 
 - **20_SSHRDPArcVM.ps1**: Connect to Azure Arc VMs via SSH.
 
-  ´´´
+  ```
   .\20_SSHRDPArcVM.ps1
-  ´´´
+  ```
 
 ---
 
