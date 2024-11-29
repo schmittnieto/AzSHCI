@@ -12,12 +12,11 @@
     - Allows the user to select the Azure subscription and resource group.
     - Retrieves available VM images based on predefined publishers.
     - Allows the user to select images to download.
-    - Creates a subdirectory to avoid permission issues.
     - Downloads selected images using AzCopy directly on the VM Node.
     - Converts downloaded VHDs to VHDX format and optimizes them on the VM Node.
 
 .NOTES
-    - Based on Jaromir's approach: https://github.com/DellGEOS/AzureStackHOLs/tree/main/tips%26tricks/09-PullingImageFromAzure
+    - Based on Jaromir´s aproach: https://github.com/DellGEOS/AzureStackHOLs/tree/main/tips%26tricks/09-PullingImageFromAzure
     - Designed by Cristian Schmitt Nieto. For more information and usage, visit: https://schmitt-nieto.com/blog/azure-stack-hci-day2/
     - Ensure you run this script with administrative privileges.
     - Requires PowerShell 5.1 or later.
@@ -30,7 +29,6 @@
 $region = "westeurope"
 $nodeName = "NODE"
 $LibraryVolumeName = "UserStorage_1"
-$SubDirectoryName = "Images"
 
 $netBIOSName = "AZURESTACK"
 $hcilcmuser = "hciadmin"
@@ -96,30 +94,17 @@ function Install-RequiredModules {
 
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-    # Commented out NuGet installation section
-    # if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
-    #     Write-Message "Installing NuGet package provider..." -Type "Info"
-    #     try {
-    #         Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ErrorAction Stop
-    #         Write-Message "NuGet package provider installed successfully." -Type "Success"
-    #     } catch {
-    #         Write-Message "Failed to install NuGet package provider. Error: $_" -Type "Error"
-    #         exit 1
-    #     }
-    # } else {
-    #     Write-Message "NuGet package provider is already installed." -Type "Success"
-    # }
-
-    # Ensure the PSGallery repository is available
-    if (-not (Get-PSRepository -Name "PSGallery" -ErrorAction SilentlyContinue)) {
-        Write-Message "Registering PSGallery repository..." -Type "Info"
+    if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
+        Write-Message "Installing NuGet package provider..." -Type "Info"
         try {
-            #Register-PSRepository -Default -ErrorAction Stop
-            Write-Message "PSGallery repository registered successfully." -Type "Success"
+            # Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ErrorAction Stop
+            Write-Message "NuGet package provider installed successfully." -Type "Success"
         } catch {
-            Write-Message "Failed to register PSGallery repository. Error: $_" -Type "Error"
+            Write-Message "Failed to install NuGet package provider. Error: $_" -Type "Error"
             exit 1
         }
+    } else {
+        Write-Message "NuGet package provider is already installed." -Type "Success"
     }
 
     foreach ($ModuleName in $ModuleNames) {
@@ -159,7 +144,6 @@ function Get-Option {
         exit 1
     }
 }
-
 function Connect-AzAccountWithRetry {
     param(
         [int]$MaxRetries = 5,
@@ -248,7 +232,7 @@ function Import-Images {
         Write-Message "Downloading VHD directly to VM Node using AzCopy..." -Type "Info"
         try {
             Invoke-Command -VMName $nodeName -Credential $hciCredentials -ScriptBlock {
-                param($AzCopyUrl, $SubDirectoryPath)
+                param($AzCopyUrl)
                 $azCopyPath = "C:\AzCopy\azcopy.exe"
                 if (-not (Test-Path $azCopyPath)) {
                     Write-Host "AzCopy not found on VM Node. Installing AzCopy..." -ForegroundColor Cyan
@@ -273,22 +257,14 @@ function Import-Images {
                 } else {
                     Write-Host "AzCopy is already installed on VM Node." -ForegroundColor Green
                 }
-
-                # Create the Images subdirectory if it doesn't exist
-                if (-not (Test-Path $SubDirectoryPath)) {
-                    New-Item -ItemType Directory -Path $SubDirectoryPath -Force | Out-Null
-                    Write-Host "Created subdirectory: $SubDirectoryPath" -ForegroundColor Green
-                } else {
-                    Write-Host "Subdirectory already exists: $SubDirectoryPath" -ForegroundColor Green
-                }
-            } -ArgumentList $AzCopyUrl, "C:\ClusterStorage\$LibraryVolumeName\$SubDirectoryName"
+            } -ArgumentList $AzCopyUrl
 
             Invoke-Command -VMName $nodeName -Credential $hciCredentials -ScriptBlock {
-                param($SAS, $DiskName, $LibraryVolumeName, $SubDirectoryName)
+                param($SAS, $DiskName, $LibraryVolumeName)
                 $azCopyPath = "C:\AzCopy\azcopy.exe"
-                $DestinationPath = "C:\ClusterStorage\$LibraryVolumeName\$SubDirectoryName\$DiskName.vhd"
+                $DestinationPath = "C:\ClusterStorage\$LibraryVolumeName\$DiskName.vhd"
                 & $azCopyPath copy "$SAS" "$DestinationPath" --check-md5 NoCheck --cap-mbps 500
-            } -ArgumentList $SAS, $DiskName, $LibraryVolumeName, $SubDirectoryName
+            } -ArgumentList $SAS, $DiskName, $LibraryVolumeName
 
             Write-Message "VHD downloaded to VM Node successfully." -Type "Success"
         } catch {
@@ -309,25 +285,25 @@ function Import-Images {
 
         Write-Message "Converting VHD to VHDX and optimizing on VM Node..." -Type "Info"
         try {
-            $DestPath = Invoke-Command -VMName $nodeName -Credential $hciCredentials -ScriptBlock {
-                param($DiskName, $LibraryVolumeName, $SubDirectoryName)
-                $SourcePath = "C:\ClusterStorage\$LibraryVolumeName\$SubDirectoryName\$DiskName.vhd"
-                $DestPath = "C:\ClusterStorage\$LibraryVolumeName\$SubDirectoryName\$DiskName.vhdx"
+            Invoke-Command -VMName $nodeName -Credential $hciCredentials -ScriptBlock {
+                param($DiskName, $LibraryVolumeName)
+                $SourcePath = "C:\ClusterStorage\$LibraryVolumeName\$DiskName.vhd"
+                $DestPath = "C:\ClusterStorage\$LibraryVolumeName\$DiskName.vhdx"
                 if (Test-Path $DestPath) {
                     Remove-Item -Path $DestPath -Force
                 }
                 Convert-VHD -Path $SourcePath -DestinationPath $DestPath -VHDType Dynamic -DeleteSource
                 Optimize-VHD -Path $DestPath -Mode Full
                 return $DestPath
-            } -ArgumentList $DiskName, $LibraryVolumeName, $SubDirectoryName
+            } -ArgumentList $DiskName, $LibraryVolumeName
             Write-Message "VHD converted to VHDX and optimized successfully." -Type "Success"
             $DiskPaths += $DestPath
         } catch {
             Write-Message "Failed to convert or optimize VHD for $DiskName on VM Node. Error: $_" -Type "Error"
             Invoke-Command -VMName $nodeName -Credential $hciCredentials -ScriptBlock {
-                param($LibraryVolumeName, $DiskName, $SubDirectoryName)
-                Remove-Item -Path "C:\ClusterStorage\$LibraryVolumeName\$SubDirectoryName\$DiskName.vhd" -Force -ErrorAction SilentlyContinue
-            } -ArgumentList $LibraryVolumeName, $DiskName, $SubDirectoryName
+                param($LibraryVolumeName, $DiskName)
+                Remove-Item -Path "C:\ClusterStorage\$LibraryVolumeName\$DiskName.vhd" -Force -ErrorAction SilentlyContinue
+            } -ArgumentList $LibraryVolumeName, $DiskName
             continue
         }
     }
@@ -337,99 +313,79 @@ function Import-Images {
 
 #region Script Execution
 
+$currentStep++
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Installing required PowerShell modules..."
+Write-Message "Step $currentStep of $totalSteps : Installing required PowerShell modules." -Type "Info"
 try {
-    # Step 1: Installing required PowerShell modules
-    $currentStep++
-    Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Installing required PowerShell modules..."
-    Write-Message "Step $currentStep of $totalSteps : Installing required PowerShell modules." -Type "Info"
-    try {
-        Install-RequiredModules
-    } catch {
-        Write-Message "An error occurred durante la instalación de módulos. Error: $_" -Type "Error"
-        exit 1
-    }
-
-    # Step 2: Connecting to Azure
-    $currentStep++
-    Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Connecting to Azure..."
-    Write-Message "Step $currentStep of $totalSteps : Connecting to Azure." -Type "Info"
-    try {
-        Connect-AzAccountWithRetry -MaxRetries 5 -DelaySeconds 20
-    } catch {
-        Write-Message "Ocurrió un error durante la conexión a Azure. Error: $_" -Type "Error"
-        exit 1
-    }
-
-    # Step 3: Selecting Subscription and Resource Group
-    $currentStep++
-    Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Selecting Subscription and Resource Group..."
-    Write-Message "Step $currentStep of $totalSteps : Selecting Subscription and Resource Group." -Type "Info"
-    try {
-        $selectedSubscription = Get-AzContext -ErrorAction Stop
-        $SubscriptionName = $selectedSubscription.Subscription.Name
-        $SubscriptionId = $selectedSubscription.Subscription.Id
-        Write-Message "Subscription selected: $SubscriptionName " -Type "Success"
-        $ResourceGroupName = Get-Option "Get-AzResourceGroup" "ResourceGroupName"
-        Write-Message "Resource Group selected: $ResourceGroupName" -Type "Success"
-    } catch {
-        Write-Message "Ocurrió un error al seleccionar la Subscription o el Resource Group. Error: $_" -Type "Error"
-        exit 1
-    }
-
-    # Step 4: Selecting images to download
-    $currentStep++
-    Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Selecting images to download..."
-    Write-Message "Step $currentStep of $totalSteps : Selecting images to download." -Type "Info"
-    try {
-        $ImagesToDownload = Select-ImagesToDownload
-        if ($ImagesToDownload.Count -eq 0) {
-            Write-Message "No se seleccionaron imágenes para descargar. Saliendo del script." -Type "Warning"
-            exit 0
-        }
-    } catch {
-        Write-Message "Ocurrió un error al seleccionar las imágenes para descargar. Error: $_" -Type "Error"
-        exit 1
-    }
-
-    # Step 5: Importing and adding images
-    $currentStep++
-    Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Importing and adding images..."
-    Write-Message "Step $currentStep of $totalSteps : Importing and adding images." -Type "Info"
-    try {
-        Import-Images -ImagesToDownload $ImagesToDownload -SubscriptionID $SubscriptionId -ResourceGroupName $ResourceGroupName
-    } catch {
-        Write-Message "Ocurrió un error durante la importación y adición de imágenes. Error: $_" -Type "Error"
-        exit 1
-    }
-
-    # Step 6: Completion
-    $currentStep++
-    Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Completed."
-    Write-Message "Step $currentStep of $totalSteps : Completed." -Type "Success"
-
-    # Obtener y mostrar la lista de imágenes desde el directorio Images en el nodo VM
-    try {
-        $imageList = Invoke-Command -VMName $nodeName -Credential $hciCredentials -ScriptBlock {
-            param($SubDirectoryPath)
-            Get-ChildItem -Path $SubDirectoryPath -Filter "*.vhdx" | Sort-Object LastWriteTime -Descending | Select-Object -ExpandProperty FullName
-        } -ArgumentList "C:\ClusterStorage\$LibraryVolumeName\$SubDirectoryName"
-
-        if ($imageList.Count -gt 0) {
-            foreach ($path in $imageList) {
-                Write-Message "The image can be added from the portal as a Custom Local image by adding the following path to it:" -Type "Info"
-                Write-Message $path -Type "Info"
-            }
-        } else {
-            Write-Message "No disks were processed." -Type "Warning"
-        }
-
-    } catch {
-        Write-Message "Failed to retrieve images from VM Node. Error: $_" -Type "Error"
-    }
-
+    Install-RequiredModules
 } catch {
-    Write-Message "An error occurred during script execution. Error: $_" -Type "Error"
+    Write-Message "An error occurred during module installation. Error: $_" -Type "Error"
     exit 1
+}
+
+$currentStep++
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Connecting to Azure..."
+Write-Message "Step $currentStep of $totalSteps : Connecting to Azure." -Type "Info"
+try {
+    Connect-AzAccountWithRetry -MaxRetries 5 -DelaySeconds 20
+} catch {
+    Write-Message "An error occurred during Azure connection. Error: $_" -Type "Error"
+    exit 1
+}
+
+$currentStep++
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Selecting Subscription and Resource Group..."
+Write-Message "Step $currentStep of $totalSteps : Selecting Subscription and Resource Group." -Type "Info"
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Selecting Subscription and Resource Group..."
+Write-Message "Step $currentStep of $totalSteps : Selecting Subscription and Resource Group." -Type "Info"
+try {
+    $selectedSubscription = Get-AzContext -ErrorAction Stop
+    $SubscriptionName = $selectedSubscription.Subscription.Name
+    $SubscriptionId = $selectedSubscription.Subscription.Id
+    Write-Message "Subscription selected: $SubscriptionName " -Type "Success"
+    $ResourceGroupName = Get-Option "Get-AzResourceGroup" "ResourceGroupName"
+    Write-Message "Resource Group selected: $ResourceGroupName" -Type "Success"
+} catch {
+    Write-Message "An error occurred while selecting Subscription or Resource Group. Error: $_" -Type "Error"
+    exit 1
+}
+
+$currentStep++
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Selecting images to download..."
+Write-Message "Step $currentStep of $totalSteps : Selecting images to download." -Type "Info"
+try {
+    $ImagesToDownload = Select-ImagesToDownload
+    if ($ImagesToDownload.Count -eq 0) {
+        Write-Message "No images selected for download. Exiting script." -Type "Warning"
+        exit 0
+    }
+} catch {
+    Write-Message "An error occurred while selecting images to download. Error: $_" -Type "Error"
+    exit 1
+}
+
+$currentStep++
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Importing and adding images..."
+Write-Message "Step $currentStep of $totalSteps : Importing and adding images." -Type "Info"
+try {
+    Import-Images -ImagesToDownload $ImagesToDownload -SubscriptionID $SubscriptionID -ResourceGroupName $ResourceGroupName
+} catch {
+    Write-Message "An error occurred during the import and addition of images. Error: $_" -Type "Error"
+    exit 1
+}
+
+$currentStep++
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Completed."
+Write-Message "Step $currentStep of $totalSteps : Completed." -Type "Success"
+Write-Message "All selected images have been downloaded and added to Azure Stack HCI successfully." -Type "Success"
+
+if ($DiskPaths.Count -gt 0) {
+    Write-Message "Your disks are located at the following paths:" -Type "Success"
+    foreach ($path in $DiskPaths) {
+        Write-Message $path -Type "Info"
+    }
+} else {
+    Write-Message "No disks were processed." -Type "Warning"
 }
 
 #endregion

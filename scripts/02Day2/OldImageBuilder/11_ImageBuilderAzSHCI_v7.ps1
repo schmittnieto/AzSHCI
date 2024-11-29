@@ -113,13 +113,7 @@ function Install-RequiredModules {
     # Ensure the PSGallery repository is available
     if (-not (Get-PSRepository -Name "PSGallery" -ErrorAction SilentlyContinue)) {
         Write-Message "Registering PSGallery repository..." -Type "Info"
-        try {
-            #Register-PSRepository -Default -ErrorAction Stop
-            Write-Message "PSGallery repository registered successfully." -Type "Success"
-        } catch {
-            Write-Message "Failed to register PSGallery repository. Error: $_" -Type "Error"
-            exit 1
-        }
+        # Register-PSRepository -Default
     }
 
     foreach ($ModuleName in $ModuleNames) {
@@ -345,7 +339,7 @@ try {
     try {
         Install-RequiredModules
     } catch {
-        Write-Message "An error occurred durante la instalación de módulos. Error: $_" -Type "Error"
+        Write-Message "An error occurred during module installation. Error: $_" -Type "Error"
         exit 1
     }
 
@@ -356,7 +350,7 @@ try {
     try {
         Connect-AzAccountWithRetry -MaxRetries 5 -DelaySeconds 20
     } catch {
-        Write-Message "Ocurrió un error durante la conexión a Azure. Error: $_" -Type "Error"
+        Write-Message "An error occurred during Azure connection. Error: $_" -Type "Error"
         exit 1
     }
 
@@ -372,7 +366,7 @@ try {
         $ResourceGroupName = Get-Option "Get-AzResourceGroup" "ResourceGroupName"
         Write-Message "Resource Group selected: $ResourceGroupName" -Type "Success"
     } catch {
-        Write-Message "Ocurrió un error al seleccionar la Subscription o el Resource Group. Error: $_" -Type "Error"
+        Write-Message "An error occurred while selecting Subscription or Resource Group. Error: $_" -Type "Error"
         exit 1
     }
 
@@ -383,11 +377,11 @@ try {
     try {
         $ImagesToDownload = Select-ImagesToDownload
         if ($ImagesToDownload.Count -eq 0) {
-            Write-Message "No se seleccionaron imágenes para descargar. Saliendo del script." -Type "Warning"
+            Write-Message "No images selected for download. Exiting script." -Type "Warning"
             exit 0
         }
     } catch {
-        Write-Message "Ocurrió un error al seleccionar las imágenes para descargar. Error: $_" -Type "Error"
+        Write-Message "An error occurred while selecting images to download. Error: $_" -Type "Error"
         exit 1
     }
 
@@ -398,7 +392,7 @@ try {
     try {
         Import-Images -ImagesToDownload $ImagesToDownload -SubscriptionID $SubscriptionId -ResourceGroupName $ResourceGroupName
     } catch {
-        Write-Message "Ocurrió un error durante la importación y adición de imágenes. Error: $_" -Type "Error"
+        Write-Message "An error occurred during the import and addition of images. Error: $_" -Type "Error"
         exit 1
     }
 
@@ -407,24 +401,13 @@ try {
     Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Completed."
     Write-Message "Step $currentStep of $totalSteps : Completed." -Type "Success"
 
-    # Obtener y mostrar la lista de imágenes desde el directorio Images en el nodo VM
-    try {
-        $imageList = Invoke-Command -VMName $nodeName -Credential $hciCredentials -ScriptBlock {
-            param($SubDirectoryPath)
-            Get-ChildItem -Path $SubDirectoryPath -Filter "*.vhdx" | Sort-Object LastWriteTime -Descending | Select-Object -ExpandProperty FullName
-        } -ArgumentList "C:\ClusterStorage\$LibraryVolumeName\$SubDirectoryName"
-
-        if ($imageList.Count -gt 0) {
-            foreach ($path in $imageList) {
-                Write-Message "The image can be added from the portal as a Custom Local image by adding the following path to it:" -Type "Info"
-                Write-Message $path -Type "Info"
-            }
-        } else {
-            Write-Message "No disks were processed." -Type "Warning"
+    if ($DiskPaths.Count -gt 0) {
+        foreach ($path in $DiskPaths) {
+            Write-Message "The image can be added from the portal as a Custom Local image by adding the following path to it:" -Type "Info"
+            Write-Message $path -Type "Info"
         }
-
-    } catch {
-        Write-Message "Failed to retrieve images from VM Node. Error: $_" -Type "Error"
+    } else {
+        Write-Message "No disks were processed." -Type "Warning"
     }
 
 } catch {
