@@ -283,6 +283,7 @@ try {
         w32tm /config /manualpeerlist:$nic1DNS /syncfromflags:manual /update | Out-Null
         Restart-Service w32time -Force | Out-Null
         w32tm /resync | Out-Null
+        Set-TimeZone -Id "UTC"
 
         Write-Host "Network settings configured successfully." -ForegroundColor Green | Out-Null
     } -ArgumentList $NIC1, $NIC2, $nodeMacNIC1Address, $nodeMacNIC2Address, $nic1IP, $nic1GW, $nic1DNS -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
