@@ -6,15 +6,15 @@
   <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://img.shields.io/github/v/release/schmittnieto/AzSHCI"></a><br>
 </p>
 
-**For detailed instructions, visit: [schmitt-nieto.com/blog/azure-stack-hci-demolab/](https://schmitt-nieto.com/blog/azure-stack-hci-demolab/)**
+Welcome to **AzSHCI**—your comprehensive set of PowerShell scripts to deploy, configure, and manage Azure Local for testing, lab, or proof-of-concept scenarios. This repository brings together multiple scripts, each with its own purpose and structure, allowing you to spin up a fully functioning Azure Stack HCI environment quickly.
 
-Welcome to **AzSHCI**! This repository contains PowerShell scripts to help you deploy Azure Stack HCI in testing and lab environments quickly and efficiently.
+For a deeper walk-through and best practices, check out the blog post: [schmitt-nieto.com/blog/azure-stack-hci-demolab/](https://schmitt-nieto.com/blog/azure-stack-hci-demolab/)
 
 ---
 
 ## Repository Structure
 
-```
+```plaintext
 AzSHCI/
 ├── scripts/
 │   ├── 01Lab/
@@ -32,161 +32,159 @@ AzSHCI/
 └── LICENSE
 ```
 
+Each folder under `scripts/` is dedicated to a specific lifecycle phase of your Azure Stack HCI environment:
+
+- **01Lab**: Infrastructure setup, cluster creation, domain configuration, and environment cleanup.
+- **02Day2**: Day-two operations (e.g., start/stop routines, image import/build).
+- **03VMDeployment**: Scripts related to deploying and managing VMs (including SSH connectivity and Azure Arc integration).
+
 ---
 
-## Scripts Overview
+## Detailed Script Breakdown
 
 ### 01Lab
 
-- **00_Infra_AzHCI.ps1**: Sets up virtual networking, creates folder structures, and deploys HCI node and Domain Controller VMs. **Note:** Modify local credential parameters in the script.
+1. **00_Infra_AzHCI.ps1**  
+   - Provisions virtual switches, NAT networking, and folder structures.  
+   - Creates the Azure Stack HCI Node VM and the Domain Controller VM.  
+   - Ensures TPM checks and Hyper-V prerequisites are met.
 
-- **01_DC.ps1**: Configures the Domain Controller VM, including network settings and Active Directory setup. **Note:** Modify local credential parameters in the script.
+2. **01_DC.ps1**  
+   - Configures the Domain Controller VM: network settings, time zone, Active Directory installation, and DNS setup.  
+   - Creates foundational OUs and prepares AD for Azure Stack HCI.  
 
-- **02_Cluster.ps1**: Configures the Azure Stack HCI node VM, installs necessary features, and registers the node with Azure Arc. **Note:** Modify local credential parameters in the script.
+3. **02_Cluster.ps1**  
+   - Renames and reconfigures the Node VM.  
+   - Installs Windows features needed for clustering and Arc integration.  
+   - Registers the node with Azure Arc for management.
 
-- **03_TroubleshootingExtensions.ps1**: Manages Azure Connected Machine extensions for HCI nodes.
+4. **03_TroubleshootingExtensions.ps1**  
+   - Manages Azure Connected Machine (Arc) extensions for your Azure Stack HCI environment.  
+   - Removes failed extensions, reinstalls them, and ensures required extensions are present.
 
-- **99_Offboarding.ps1**: Cleans up the deployment by removing VMs, virtual switches, NAT settings, and folders.
+5. **99_Offboarding.ps1**  
+   - Cleans up the entire lab environment by removing VMs, NAT settings, virtual switches, and associated folder structures.  
 
 ### 02Day2
 
-- **10_StartStopAzSHCI.ps1**: Starts or stops your Azure Stack HCI infrastructure by managing the DC and Cluster Node VMs in the correct order with progress indicators.
+1. **10_StartStopAzSHCI.ps1**  
+   - A simple script to stop or start your entire Azure Stack HCI lab environment in an orderly sequence.  
+   - Ensures the Domain Controller is turned on or off before the Node, and gracefully shuts down cluster services.
 
-- **11_ImageBuilderAzSHCI.ps1**: Downloads selected VM images from Azure to Azure Stack HCI, converts them to VHDX format, and optimizes them. **Note:** Modify local credential parameters in the script.
+2. **11_ImageBuilderAzSHCI.ps1**  
+   - Automates downloading official Azure VM images (Windows or Linux) and storing them in your Azure Stack HCI environment.  
+   - Uses AzCopy for high-speed transfers, converts the retrieved VHD into VHDX, and optimizes it for deployment.  
 
 ### 03VMDeployment
 
-- **20_SSHRDPArcVM.ps1**: Searches for Azure Arc VMs in a specified resource group, ensures the SSH extension is installed, and establishes an SSH connection.
+1. **20_SSHRDPArcVM.ps1**  
+   - Searches for Azure Arc-connected VMs in a specified resource group.  
+   - Validates the presence of SSH extensions and, if necessary, installs them.  
+   - Initiates an SSH connection to your Arc-enabled VMs, enabling RDP tunneling or direct SSH.
+
+---
+
+## Prerequisites
+
+### Hardware
+
+- **TPM Chip**: Required for VM-based security features (vTPM, Key Protector).
+- **Hyper-V Capable Processor**: Essential for nested virtualization.
+- **Minimum 32 GB RAM** (64 GB or more recommended for advanced scenarios).
+- **Sufficient Disk Space** for VM data and ISO files.
+
+### Software
+
+- **Active Azure Subscription** to register the node(s) with Azure Arc and deploy HCI.  
+- **Windows Server 2025 Evaluation ISO** (or later), placed in `C:\ISO\WS2025.iso`.
+- **Azure Stack HCI OS ISO**, placed in `C:\ISO\HCI23H2.iso`.
+- **PowerShell** running with administrative privileges and Execution Policy set to `RemoteSigned` or `Bypass`.
 
 ---
 
 ## Usage
 
-### Prerequisites
-
-- **Hardware**:
-  - TPM chip
-  - Processor capable of running Hyper-V
-  - **Recommended RAM**: 64 GB or more (32 GB minimum for basic testing)
-
-- **Software**:
-  - Azure Subscription with necessary permissions
-  - **ISO Files** stored in `C:\ISO`:
-    - Windows Server 2025 Evaluation
-    - Azure Stack HCI OS
-
-### Running the Scripts
-
-1. **Clone the Repository**:
-
-   ```
+1. **Clone the Repository**  
+   ```plaintext
    git clone https://github.com/schmittnieto/AzSHCI.git
    ```
 
-2. **Navigate to the Scripts Directory**:
-
-   ```
+2. **Navigate to the Scripts Directory**  
+   ```plaintext
    cd AzSHCI/scripts/01Lab
    ```
 
-3. **Set Execution Policy**:
-
-   ```
+3. **Set the Execution Policy** (If needed)  
+   ```powershell
    Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
    ```
 
-4. **Modify Script Variables**:
+4. **Edit Script Variables**  
+   - Update credentials: `$defaultUser`, `$defaultPwd` in each script if you use different local admin accounts.  
+   - Place your ISO images in `C:\ISO\` or modify the paths in the scripts accordingly.
 
-   Update the local credential parameters (`$defaultUser` and `$defaultPwd`) in each script to match your environment.
+5. **Run the Scripts in Order**  
+   ```powershell
+   .\00_Infra_AzHCI.ps1      # Creates infrastructure, Node VM, DC VM
+   .\01_DC.ps1               # Configures Domain Controller
+   .\02_Cluster.ps1          # Sets up the cluster node & Arc registration
+   .\03_TroubleshootingExtensions.ps1  # Optional troubleshooting
+   # Use .\99_Offboarding.ps1 when you want to remove everything
+   ```
 
-5. **Run the Scripts in Order**:
+### Day-2 Operations
 
-   - **Initialize Infrastructure and Create VMs**:
-
-     ```
-     .\00_Infra_AzHCI.ps1
-     ```
-
-   - **Configure Domain Controller**:
-
-     ```
-     .\01_DC.ps1
-     ```
-
-   - **Configure Cluster Node**:
-
-     ```
-     .\02_Cluster.ps1
-     ```
-
-   - **Troubleshoot Extensions (if needed)**:
-
-     ```
-     .\03_TroubleshootingExtensions.ps1
-     ```
-
-   - **Cleanup and Offboarding (if needed)**:
-
-     ```
-     .\99_Offboarding.ps1
-     ```
-
-### Day 2 Operations
-
-Navigate to `AzSHCI/scripts/02Day2` for the following scripts:
-
-- **10_StartStopAzSHCI.ps1**: Start or stop your Azure Stack HCI infrastructure.
-
+- **Start/Stop**:  
+  ```powershell
+  .\scripts\02Day2\10_StartStopAzSHCI.ps1
   ```
-  .\10_StartStopAzSHCI.ps1
+  Ensures an orderly start or shutdown of your environment.
+
+- **Image Building**:  
+  ```powershell
+  .\scripts\02Day2\11_ImageBuilderAzSHCI.ps1
   ```
+  Pulls images from Azure, converts them, and stores them as VHDX for local deployment.
 
-- **11_ImageBuilderAzSHCI.ps1**: Download and prepare VM images from Azure.
+### VM Deployment & Arc Integration
 
+- **SSH or RDP to Arc VMs**:  
+  ```powershell
+  .\scripts\03VMDeployment\20_SSHRDPArcVM.ps1
   ```
-  .\11_ImageBuilderAzSHCI.ps1
-  ```
-
-  **Note:** Modify local credential parameters in the script.
-
-### VM Deployment
-
-Navigate to `AzSHCI/scripts/03VMDeployment`:
-
-- **20_SSHRDPArcVM.ps1**: Connect to Azure Arc VMs via SSH.
-
-  ```
-  .\20_SSHRDPArcVM.ps1
-  ```
+  Ensures the SSH extension is present on your Arc VMs and then establishes a secure connection.
 
 ---
 
-## Future Enhancements
+## Advanced Features & Roadmap
 
-Planned additions:
+- **Azure Kubernetes Service (AKS) on Azure Stack HCI**: Planned integration scripts for a hybrid K8s setup.
+- **Azure Virtual Desktop (AVD)**: Future templates to deploy AVD in conjunction with Azure Stack HCI.  
+- **Azure Arc Enhancements**: Extended support for policy, monitoring, and DevOps pipelines.
 
-- **Azure Kubernetes Service (AKS)**
-- **Azure Virtual Desktop (AVD)**
-- **Azure Arc Managed VMs**
-
-Stay tuned for updates!
+Stay tuned for additional automation scripts and integration points!
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Please fork the repository and submit a pull request.
+We welcome all contributors—your insights, bug fixes, and feature requests are invaluable. Feel free to:
+- Fork the repository and make pull requests.
+- Open [issues](https://github.com/schmittnieto/AzSHCI/issues) for suggestions or bugs.
+- Contact us directly if you have specialized requirements or questions.
+
+---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Contact
-
-For questions or issues, open an [issue](https://github.com/schmittnieto/AzSHCI/issues) in the repository.
+This project is under the [MIT License](LICENSE). Refer to the license file for usage details.
 
 ---
 
-Thank you for using **AzSHCI**! I hope these scripts simplify your Azure Stack HCI deployment process.
+## Contact & Further Information
 
----
+- **Author**: Cristian Schmitt Nieto  
+- **Blog**: [schmitt-nieto.com/blog/azure-stack-hci-demolab/](https://schmitt-nieto.com/blog/azure-stack-hci-demolab/)  
+- **Issues**: [GitHub Issues](https://github.com/schmittnieto/AzSHCI/issues)
+
+Thank you for using **AzSHCI**! We hope these scripts accelerate your Azure Stack HCI journey.
