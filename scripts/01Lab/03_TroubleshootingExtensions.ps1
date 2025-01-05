@@ -247,8 +247,8 @@ $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Selecting Azure Subscription..."
 Write-Message "Retrieving available Azure Subscriptions..." -Type "Info"
 try {
-    $subscription = Get-Option "Get-AzSubscription" "Name"
-    Set-AzContext -SubscriptionName $subscription -ErrorAction Stop
+    #$subscription = Get-Option "Get-AzSubscription" "Name"
+    #Set-AzContext -SubscriptionName $subscription -ErrorAction Stop
     $selectedSubscription = Get-AzContext -ErrorAction Stop
     $SubscriptionId = $selectedSubscription.Subscription.Id
     Write-Message "Selected Subscription: $($selectedSubscription.Subscription.Name)" -Type "Success"
