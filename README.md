@@ -1,4 +1,4 @@
-# AzSHCI - Azure Stack HCI Deployment Scripts
+# AzSHCI - Azure Local Deployment Scripts
 
 <p align="center">
   <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://img.shields.io/github/languages/top/schmittnieto/AzSHCI.svg"></a>
@@ -7,7 +7,7 @@
   <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://badgen.net/https/raw.githubusercontent.com/schmittnieto/AzSHCI/refs/heads/main/lastdeployment.json"></a><br>
 </p>
 
-Welcome to **AzSHCI**—your comprehensive set of PowerShell scripts to deploy, configure, and manage Azure Local for testing, lab, or proof-of-concept scenarios. This repository brings together multiple scripts, each with its own purpose and structure, allowing you to spin up a fully functioning Azure Stack HCI environment quickly.
+Welcome to **AzSHCI**, your comprehensive set of PowerShell scripts to deploy, configure and manage Azure Local for testing, lab, or proof-of-concept scenarios. This repository brings together multiple scripts, each with its own purpose and structure, allowing you to spin up a fully functioning Azure Stack HCI environment quickly.
 
 For a deeper walk-through and best practices, check out the blog post: [schmitt-nieto.com/blog/azure-stack-hci-demolab/](https://schmitt-nieto.com/blog/azure-stack-hci-demolab/)
 
