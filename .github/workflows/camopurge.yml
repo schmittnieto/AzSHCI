@@ -1,0 +1,20 @@
+name: "action-camo-purge"
+author: "kevincobain2000"
+description: "Purge all the camo images for the repo for a given branch from camo.githubusercontent"
+branding:
+  icon: 'refresh-cw'
+  color: 'blue'
+
+runs:
+  using: "composite"
+  steps:
+
+    - id: branch-name
+      uses: tj-actions/branch-names@v7
+
+    - name: Grep and Purge all camo github user content images
+      shell: bash
+      run: |
+        urls=$(curl -sLk https://github.com/${{github.repository_owner}}/${{ github.event.repository.name }}/tree/${{ steps.branch-name.outputs.current_branch }}|grep -Eo "(http|https)://camo.githubusercontent.com[a-zA-Z0-9./?=_%:-]*")
+
+        while IFS= read -r line; do curl -X PURGE $line ; done <<< $urls
