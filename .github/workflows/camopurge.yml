@@ -1,4 +1,9 @@
 name: "action-camo-purge"
+on:
+  push:
+    branches:
+      - main  # O la rama que desees monitorizar
+      
 author: "kevincobain2000"
 description: "Purge all the camo images for the repo for a given branch from camo.githubusercontent"
 branding:
