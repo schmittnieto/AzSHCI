@@ -7,9 +7,9 @@
   <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://img.shields.io/github/v/release/schmittnieto/AzSHCI"></a><br>
 </p>
 
-Welcome to **AzSHCI**, your comprehensive set of PowerShell scripts to deploy, configure and manage Azure Local for testing, lab, or proof-of-concept scenarios. This repository brings together multiple scripts, each with its own purpose and structure, allowing you to spin up a fully functioning Azure Stack HCI environment quickly.
+Welcome to **AzSHCI**, your comprehensive set of PowerShell scripts to deploy, configure and manage Azure Local for testing, lab, or proof-of-concept scenarios. This repository brings together multiple scripts, each with its own purpose and structure, allowing you to spin up a fully functioning Azure Local environment quickly.
 
-For a deeper walk-through and best practices, check out the blog post: [schmitt-nieto.com/blog/azure-stack-hci-demolab/](https://schmitt-nieto.com/blog/azure-stack-hci-demolab/)
+For a deeper walk-through and best practices, check out the blog post: [schmitt-nieto.com/blog/azure-local-demolab/](https://schmitt-nieto.com/blog/azure-local-demolab/)
 
 ---
 
@@ -33,7 +33,7 @@ AzSHCI/
 └── LICENSE
 ```
 
-Each folder under `scripts/` is dedicated to a specific lifecycle phase of your Azure Stack HCI environment:
+Each folder under `scripts/` is dedicated to a specific lifecycle phase of your Azure Local environment:
 
 - **01Lab**: Infrastructure setup, cluster creation, domain configuration, and environment cleanup.
 - **02Day2**: Day-two operations (e.g., start/stop routines, image import/build).
@@ -47,12 +47,12 @@ Each folder under `scripts/` is dedicated to a specific lifecycle phase of your 
 
 1. **00_Infra_AzHCI.ps1**  
    - Provisions virtual switches, NAT networking, and folder structures.  
-   - Creates the Azure Stack HCI Node VM and the Domain Controller VM.  
+   - Creates the Azure Local Node VM and the Domain Controller VM.  
    - Ensures TPM checks and Hyper-V prerequisites are met.
 
 2. **01_DC.ps1**  
    - Configures the Domain Controller VM: network settings, time zone, Active Directory installation, and DNS setup.  
-   - Creates foundational OUs and prepares AD for Azure Stack HCI.  
+   - Creates foundational OUs and prepares AD for Azure Local.  
 
 3. **02_Cluster.ps1**  
    - Renames and reconfigures the Node VM.  
@@ -60,7 +60,7 @@ Each folder under `scripts/` is dedicated to a specific lifecycle phase of your 
    - Registers the node with Azure Arc for management.
 
 4. **03_TroubleshootingExtensions.ps1**  
-   - Manages Azure Connected Machine (Arc) extensions for your Azure Stack HCI environment.  
+   - Manages Azure Connected Machine (Arc) extensions for your Azure Local environment.  
    - Removes failed extensions, reinstalls them, and ensures required extensions are present.
 
 5. **99_Offboarding.ps1**  
@@ -69,11 +69,11 @@ Each folder under `scripts/` is dedicated to a specific lifecycle phase of your 
 ### 02Day2
 
 1. **10_StartStopAzSHCI.ps1**  
-   - A simple script to stop or start your entire Azure Stack HCI lab environment in an orderly sequence.  
+   - A simple script to stop or start your entire Azure Local lab environment in an orderly sequence.  
    - Ensures the Domain Controller is turned on or off before the Node, and gracefully shuts down cluster services.
 
 2. **11_ImageBuilderAzSHCI.ps1**  
-   - Automates downloading official Azure VM images (Windows or Linux) and storing them in your Azure Stack HCI environment.  
+   - Automates downloading official Azure VM images (Windows or Linux) and storing them in your Azure Local environment.  
    - Uses AzCopy for high-speed transfers, converts the retrieved VHD into VHDX, and optimizes it for deployment.  
 
 ### 03VMDeployment
@@ -98,7 +98,7 @@ Each folder under `scripts/` is dedicated to a specific lifecycle phase of your 
 
 - **Active Azure Subscription** to register the node(s) with Azure Arc and deploy HCI.  
 - **Windows Server 2025 Evaluation ISO** (or later), placed in `C:\ISO\WS2025.iso`.
-- **Azure Stack HCI OS ISO**, placed in `C:\ISO\HCI23H2.iso`.
+- **Azure Local OS ISO**, placed in `C:\ISO\HCI23H2.iso`.
 - **PowerShell** running with administrative privileges and Execution Policy set to `RemoteSigned` or `Bypass`.
 
 ---
@@ -159,8 +159,8 @@ Each folder under `scripts/` is dedicated to a specific lifecycle phase of your 
 
 ## Advanced Features & Roadmap
 
-- **Azure Kubernetes Service (AKS) on Azure Stack HCI**: Planned integration scripts for a hybrid K8s setup.
-- **Azure Virtual Desktop (AVD)**: Future templates to deploy AVD in conjunction with Azure Stack HCI.  
+- **Azure Kubernetes Service (AKS) on Azure Local**: Planned integration scripts for a hybrid K8s setup.
+- **Azure Virtual Desktop (AVD)**: Future templates to deploy AVD in conjunction with Azure Local.  
 - **Azure Arc Enhancements**: Extended support for policy, monitoring, and DevOps pipelines.
 
 Stay tuned for additional automation scripts and integration points!
@@ -188,4 +188,4 @@ This project is under the [MIT License](LICENSE). Refer to the license file for 
 - **Blog**: [schmitt-nieto.com/blog/azure-stack-hci-demolab/](https://schmitt-nieto.com/blog/azure-stack-hci-demolab/)  
 - **Issues**: [GitHub Issues](https://github.com/schmittnieto/AzSHCI/issues)
 
-Thank you for using **AzSHCI**! We hope these scripts accelerate your Azure Stack HCI journey.
+Thank you for using **AzSHCI**! We hope these scripts accelerate your Azure Local journey.
