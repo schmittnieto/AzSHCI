@@ -371,7 +371,7 @@ try {
         Install-Module Az.Accounts -Force -ErrorAction Stop | Out-Null
         Install-Module Az.Resources -Force -ErrorAction Stop | Out-Null
         Install-Module Az.ConnectedMachine -Force -ErrorAction Stop | Out-Null
-        Install-Module AzsHCI.ArcInstaller -Force -ErrorAction Stop | Out-Null
+        # Install-Module AzsHCI.ArcInstaller -Force -ErrorAction Stop -AllowClobber | Out-Null
 
         Write-Host "Required PowerShell modules installed successfully." -ForegroundColor Green | Out-Null
     } -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
@@ -410,7 +410,7 @@ param($SubscriptionID, $ResourceGroupName, $TenantID, $Cloud, $Location, $ARMTok
 Import-Module Az.Accounts -ErrorAction Stop
 Import-Module Az.Resources -ErrorAction Stop
 Import-Module Az.ConnectedMachine -ErrorAction Stop
-Import-Module AzsHCI.ArcInstaller -ErrorAction Stop
+# Import-Module AzsHCI.ArcInstaller -ErrorAction Stop
 
 # Suppress all non-essential outputs
 $ErrorActionPreference = 'Stop'
