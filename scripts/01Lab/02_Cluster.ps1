@@ -284,14 +284,18 @@ try {
         Restart-Service w32time -Force | Out-Null
         w32tm /resync | Out-Null
         Set-TimeZone -Id "UTC"
-
         Write-Host "Network settings configured successfully." -ForegroundColor Green | Out-Null
+        Restart-Computer -Force -ErrorAction Stop | Out-Null
     } -ArgumentList $NIC1, $NIC2, $nodeMacNIC1Address, $nodeMacNIC2Address, $nic1IP, $nic1GW, $nic1DNS -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
+    Write-Message "VM '$nodeName' is restarting..." -Type "Success"
+    Start-SleepWithProgress -Seconds $SleepFeatures -Activity "Restarting VM" -Status "Waiting for VM to restart"
     Write-Message "Network settings configured successfully for VM '$nodeName'." -Type "Success"
 } catch {
     Write-Message "Failed to configure network settings for VM '$nodeName'. Error: $_" -Type "Error"
     exit 1
 }
+
+<#  
 
 # Step 5: Install required Windows Features
 $currentStep++
@@ -380,6 +384,7 @@ try {
     Write-Message "Failed to install PowerShell modules on VM '$nodeName'. Error: $_" -Type "Error"
     exit 1
 }
+#>
 
 # Step 8: Invoke Azure Stack HCI Arc Initialization on the node
 $currentStep++
@@ -407,9 +412,9 @@ try {
 param($SubscriptionID, $ResourceGroupName, $TenantID, $Cloud, $Location, $ARMToken, $AccountId)
 
 # Import modules (not needed) 
-Import-Module Az.Accounts -ErrorAction Stop
-Import-Module Az.Resources -ErrorAction Stop
-Import-Module Az.ConnectedMachine -ErrorAction Stop
+# Import-Module Az.Accounts -ErrorAction Stop
+# Import-Module Az.Resources -ErrorAction Stop
+# Import-Module Az.ConnectedMachine -ErrorAction Stop
 # Import-Module AzsHCI.ArcInstaller -ErrorAction Stop
 
 # Suppress all non-essential outputs
@@ -447,7 +452,7 @@ Write-Host "VM '$env:COMPUTERNAME' registered with Azure Arc successfully." -For
     } -ArgumentList $ArcInitScript, $ScriptPath -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
 
     # Run the script locally on the node
-    Start-SleepWithProgress -Seconds 20 -Activity "Waiting for Parameters" -Status "Waiting for Parameters" 
+    Start-SleepWithProgress -Seconds 10 -Activity "Waiting for Parameters" -Status "Waiting for Parameters" 
     Invoke-Command -VMName $nodeName -Credential $SetupCredentials -ScriptBlock {
         param($ScriptPath, $SubscriptionID, $ResourceGroupName, $TenantID, $Cloud, $Location, $ARMToken, $AccountId)
         $ErrorActionPreference = 'Stop'
