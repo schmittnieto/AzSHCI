@@ -51,6 +51,7 @@ $Cloud = "AzureCloud"
 # Sleep durations in seconds
 $SleepRestart = 60    # Sleep after VM restart
 $SleepFeatures = 90   # Sleep after feature installation and restart
+$SleepModules = 30   # Sleep after module installation
 
 #endregion
 
@@ -393,6 +394,7 @@ Write-Message "Registering VM '$nodeName' with Azure Arc..." -Type "Info"
 
 try {
     # Connect to Azure and set context
+    Start-SleepWithProgress -Seconds $SleepModules -Activity "Waiting for Powershell Modules" -Status "Waiting for Powershell Modules Start"
     Connect-AzAccountWithRetry -MaxRetries 5 -DelaySeconds 20  # Increased DelaySeconds to 20
 
     # Allow user to select Subscription (Not needed Anymore)
@@ -464,8 +466,8 @@ Write-Host "VM '$env:COMPUTERNAME' registered with Azure Arc successfully." -For
         # Suppress all non-essential outputs
 
         # Execute the script locally
-        & $ScriptPath -SubscriptionID $SubscriptionID -ResourceGroupName $ResourceGroupName -TenantID $TenantID -Cloud $Cloud -Location $Location -ARMToken $ARMToken -AccountId $AccountId | Out-Null
-    } -ArgumentList $ScriptPath, $SubscriptionID, $ResourceGroupName, $TenantID, $Cloud, $Location, $ARMToken, $AccountId -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
+        & $ScriptPath -SubscriptionID $SubscriptionID -ResourceGroupName $ResourceGroupName -TenantID $TenantID -Cloud $Cloud -Location $Location -ARMToken $ARMToken -AccountId $AccountId # | Out-Null
+    } -ArgumentList $ScriptPath, $SubscriptionID, $ResourceGroupName, $TenantID, $Cloud, $Location, $ARMToken, $AccountId -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false # | Out-Null
 
     # Write-Message "VM '$nodeName' registered successfully with Azure Arc." -Type "Success"
 } catch {
