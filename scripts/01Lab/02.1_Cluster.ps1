@@ -46,11 +46,13 @@ $nic1DNS = "172.19.19.2"
 # Azure Configuration
 $Location = "westeurope"
 $Cloud = "AzureCloud"
+$SubscriptionID = "000000-00000000000-000000"  # Replace with your actual Subscription ID
+$resourceGroupName = "yourResourceGroupName"  # Replace with your actual Resource Group Name
 
 # Sleep durations in seconds
 $SleepRestart = 60    # Sleep after VM restart
 $SleepFeatures = 90   # Sleep after feature installation and restart
-$SleepModules = 30    # Sleep after module installation
+$SleepModules = 10    # Sleep after module installation
 
 #endregion
 
@@ -119,55 +121,6 @@ function Start-SleepWithProgress {
     Write-Progress -Id 2 -Activity "Sleep Progress" -Completed
     Write-Message "$Activity : Completed." -Type "Success"
 } 
-
-# Function to Allow Selection from a List
-function Get-Option ($cmd, $filterproperty) {
-    $items = @("")
-    $selection = $null
-    $filteredItems = @()
-    $i = 0
-    Invoke-Expression -Command $cmd | Sort-Object $filterproperty | ForEach-Object {
-        $items += "{0}. {1}" -f $i, $_.$filterproperty
-        $i++
-    }
-    $filteredItems += $items | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-    $filteredItems | Format-Wide { $_ } -Column 4 -Force | Out-Host
-    do {
-        $r = Read-Host "Select by number"
-        if ($r -match '^\d+$' -and $r -lt $filteredItems.Count) {
-            $selection = $filteredItems[$r] -split "\.\s" | Select-Object -Last 1
-            Write-Host "Selecting $($filteredItems[$r])" -ForegroundColor Green
-        } else {
-            Write-Host "You must make a valid selection" -ForegroundColor Red
-            $selection = $null
-        }
-    } until ($null -ne $selection)
-    return $selection
-}
-
-# Function to Attempt Azure Login with Retries
-function Connect-AzAccountWithRetry {
-    param(
-        [int]$MaxRetries = 3,
-        [int]$DelaySeconds = 20
-    )
-
-    $attempt = 0
-    while ($attempt -lt $MaxRetries) {
-        try {
-            Connect-AzAccount -UseDeviceAuthentication -ErrorAction Stop
-            Write-Message "Successfully connected to Azure." -Type "Success"
-            return
-        } catch {
-            $attempt++
-            Write-Message "Azure login attempt $attempt failed. Retrying in $DelaySeconds seconds..." -Type "Warning"
-            Start-Sleep -Seconds $DelaySeconds
-        }
-    }
-
-    Write-Message "Failed to connect to Azure after $MaxRetries attempts." -Type "Error"
-    exit 1
-}
 
 #endregion
 
@@ -268,53 +221,28 @@ Write-Message "Registering VM '$nodeName' with Azure Arc..." -Type "Info"
 try {
     Start-SleepWithProgress -Seconds $SleepModules -Activity "Waiting for PowerShell Modules" -Status "Preparing to register"
     Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
-        param($Cloud, $Location)
-        # Function to Allow Selection from a List
-        function Get-Option ($cmd, $filterproperty) {
-            $items = @(""); $i = 0
-            Invoke-Expression -Command $cmd | Sort-Object $filterproperty | ForEach-Object {
-                $items += "{0}. {1}" -f $i, $_.$filterproperty; $i++
-            }
-            $items = $items | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-            $items | Format-Wide -Column 4 | Out-Host
-            do {
-                $r = Read-Host "Select by number"
-                if ($r -match '^\d+$' -and $r -lt $items.Count) {
-                    $sel = $items[$r] -split "\.\s" | Select-Object -Last 1
-                    Write-Host "Selecting $sel" -ForegroundColor Green
-                } else {
-                    Write-Host "Invalid selection" -ForegroundColor Red
-                    $sel = $null
-                }
-            } until ($sel)
-            return $sel
-        }
-        # Function to Attempt Azure Login with Retries
-        function Connect-AzAccountWithRetry {
-            param($MaxRetries=5, $DelaySeconds=20)
-            $attempt=0
-            while ($attempt -lt $MaxRetries) {
-                try {
-                    Connect-AzAccount -UseDeviceAuthentication -ErrorAction Stop
-                    Write-Host "Connected to Azure." -ForegroundColor Green
-                    return
-                } catch {
-                    $attempt++; Write-Host "Login failed ($attempt). Retrying in $DelaySeconds sec..." -ForegroundColor Yellow
-                    Start-Sleep -Seconds $DelaySeconds
-                }
-            }
-            Write-Host "Failed to connect after $MaxRetries attempts." -ForegroundColor Red
-            exit 1
-        }
+        param($Cloud, $Location, $SubscriptionID, $resourceGroupName)
 
+        # Install required modules
+        $requiredModules = @("Az.Accounts")        
+        foreach ($module in $requiredModules) {
+            if (-not (Get-Module -Name $module -ListAvailable)) {
+                Write-Host "Installing module: $module" -ForegroundColor Cyan
+                Install-Module -Name $module -RequiredVersion 4.0.2 -Force -ErrorAction Stop | Out-Null
+                Start-SleepWithProgress -Seconds $SleepModules -Activity "Installing Module" -Status "Waiting for module installation"
+            } else {
+                Write-Host "Module $module is already installed." -ForegroundColor Green
+            }
+        }
         # Connect and select resource group
-        Connect-AzAccountWithRetry
-        $resourceGroupName = Get-Option "Get-AzResourceGroup" "ResourceGroupName"
+        Connect-AzAccount -UseDeviceAuthentication -Subscription $SubscriptionID -ErrorAction Stop
         $TenantID = (Get-AzContext).Tenant.Id
         $SubscriptionID = (Get-AzContext).Subscription.Id
         $ARMToken = (Get-AzAccessToken).Token
         $AccountId = (Get-AzContext).Account.Id
 
+        Get-ScheduledTask -TaskName ImageCustomizationScheduledTask | Start-ScheduledTask
+        Start-Sleep -Seconds 20
         # Invoke Arc initialization
         Invoke-AzStackHciArcInitialization -SubscriptionID $SubscriptionID `
                                            -ResourceGroup $resourceGroupName `
@@ -325,7 +253,7 @@ try {
                                            -AccountID $AccountId -ErrorAction Stop | Out-Null
 
         Write-Host "VM '$env:COMPUTERNAME' registered with Azure Arc successfully." -ForegroundColor Green
-    } -ArgumentList $Cloud, $Location -ErrorAction Stop
+    } -ArgumentList $Cloud, $Location, $SubscriptionID, $resourceGroupName -ErrorAction Stop
 } catch {
     Write-Message "Failed to register VM '$nodeName' with Azure Arc. Error: $_" -Type "Error"
     exit 1
