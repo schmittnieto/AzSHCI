@@ -33,8 +33,8 @@ $DefaultCredentials = New-Object System.Management.Automation.PSCredential ($def
 
 $setupUser = "Setupuser"
 $setupPwd = "dgemsc#utquMHDHp3M"
-$SecuredSetupPassword = ConvertTo-SecureString $setupPwd -AsPlainText -Force
-$SetupCredentials = New-Object System.Management.Automation.PSCredential ($setupUser, $SecuredSetupPassword)
+#$SecuredSetupPassword = ConvertTo-SecureString $setupPwd -AsPlainText -Force
+#$SetupCredentials = New-Object System.Management.Automation.PSCredential ($setupUser, $SecuredSetupPassword)
 
 # Node Configuration
 $nodeName = "NODE"
@@ -256,7 +256,7 @@ $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Configuring network settings..."
 Write-Message "Configuring network settings for VM '$nodeName'..." -Type "Info"
 try {
-    Invoke-Command -VMName $nodeName -Credential $SetupCredentials -ScriptBlock {
+    Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
         param($NIC1, $NIC2, $nodeMacNIC1Address, $nodeMacNIC2Address, $nic1IP, $nic1GW, $nic1DNS)
         $ErrorActionPreference = 'Stop'
         $WarningPreference = 'SilentlyContinue'
@@ -356,12 +356,15 @@ try {
     exit 1
 }
 
+#>
+
+<#
 # Step 7: Install required PowerShell modules on the node for Azure Arc registration
 $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Installing required PowerShell modules..."
 Write-Message "Installing required PowerShell modules on VM '$nodeName'..." -Type "Info"
 try {
-    Invoke-Command -VMName $nodeName -Credential $SetupCredentials -ScriptBlock {
+    Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
         param($NIC1)
 
         $ErrorActionPreference = 'Stop'
@@ -373,11 +376,16 @@ try {
         # Suppress all non-essential outputs
 
         # Install required modules
-        Install-Module Az.Accounts -Force -ErrorAction Stop | Out-Null
-        Install-Module Az.Resources -Force -ErrorAction Stop | Out-Null
-        Install-Module Az.ConnectedMachine -Force -ErrorAction Stop | Out-Null
-        # Install-Module AzsHCI.ArcInstaller -Force -ErrorAction Stop -AllowClobber | Out-Null
-
+        
+        # Install-Module Az.Accounts -Force -ErrorAction Stop | Out-Null
+        # Install-Module Az.Resources -Force -ErrorAction Stop | Out-Null
+        # Install-Module Az.ConnectedMachine -Force -ErrorAction Stop | Out-Null
+        Install-Module AzsHCI.ArcInstaller -Force -ErrorAction Stop -AllowClobber | Out-Null
+        # Specific version for Az.Accounts https://github.com/Azure/AzureLocal-Supportability/blob/58de059cbd11c5a4dedcd4c0f1fffe7dc2fd241c/TSG/ArcRegistration/TSG-Arc-registration-failing-with-error-42.md
+        # Uninstall any existing Az.Accounts module versions except 4.0.2
+        Get-InstalledModule -Name Az.Accounts -AllVersions | Where-Object { $_.Version -ne '4.0.2' } | ForEach-Object { Uninstall-Module -Name Az.Accounts -RequiredVersion $_.Version -Force }
+        # Install the specific version of Az.Accounts
+        Install-Module -Name Az.Accounts -RequiredVersion 4.0.2 -Force | Out-Null
         Write-Host "Required PowerShell modules installed successfully." -ForegroundColor Green | Out-Null
     } -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
     Write-Message "PowerShell modules installed successfully on VM '$nodeName'." -Type "Success"
@@ -387,7 +395,7 @@ try {
 }
 #>
 
-# Step 8: Invoke Azure Stack HCI Arc Initialization on the node
+# Step 8: Invoke Azure Local Arc Initialization on the node
 $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Registering node with Azure Arc..."
 Write-Message "Registering VM '$nodeName' with Azure Arc..." -Type "Info"
@@ -439,7 +447,7 @@ Write-Host "VM '$env:COMPUTERNAME' registered with Azure Arc successfully." -For
     
     # Copy the script to the node
     $ScriptPath = "C:\Temp\ArcInitScript.ps1"
-    Invoke-Command -VMName $nodeName -Credential $SetupCredentials -ScriptBlock {
+    Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
         param($ScriptContent, $ScriptPath)
         $ErrorActionPreference = 'Stop'
         $WarningPreference = 'SilentlyContinue'
@@ -455,7 +463,7 @@ Write-Host "VM '$env:COMPUTERNAME' registered with Azure Arc successfully." -For
 
     # Run the script locally on the node
     Start-SleepWithProgress -Seconds 10 -Activity "Waiting for Parameters" -Status "Waiting for Parameters" 
-    Invoke-Command -VMName $nodeName -Credential $SetupCredentials -ScriptBlock {
+    Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
         param($ScriptPath, $SubscriptionID, $ResourceGroupName, $TenantID, $Cloud, $Location, $ARMToken, $AccountId)
         $ErrorActionPreference = 'Stop'
         $WarningPreference = 'SilentlyContinue'
@@ -464,9 +472,10 @@ Write-Host "VM '$env:COMPUTERNAME' registered with Azure Arc successfully." -For
         $InformationPreference = 'SilentlyContinue'
 
         # Suppress all non-essential outputs
-
+        start-sleep 3
         # Execute the script locally
         & $ScriptPath -SubscriptionID $SubscriptionID -ResourceGroupName $ResourceGroupName -TenantID $TenantID -Cloud $Cloud -Location $Location -ARMToken $ARMToken -AccountId $AccountId # | Out-Null
+        start-sleep 3
     } -ArgumentList $ScriptPath, $SubscriptionID, $ResourceGroupName, $TenantID, $Cloud, $Location, $ARMToken, $AccountId -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false # | Out-Null
 
     # Write-Message "VM '$nodeName' registered successfully with Azure Arc." -Type "Success"

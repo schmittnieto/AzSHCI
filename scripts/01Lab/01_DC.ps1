@@ -16,7 +16,7 @@
     - Installs Windows Updates.
     - Configures DNS forwarders.
     - Creates Organizational Units (OUs) in Active Directory.
-    - Installs necessary modules and creates Azure Stack HCI AD objects.
+    - Installs necessary modules and creates Azure Local AD objects.
 
 .NOTES
     - Designed by Cristian Schmitt Nieto. For more information and usage, visit: https://schmitt-nieto.com/blog/azure-stack-hci-demolab/
@@ -47,7 +47,7 @@ $nic1DNS = "172.19.19.2"
 $dnsForwarder = "8.8.8.8"
 $timeZone = "W. Europe Standard Time" # Use "Get-TimeZone -ListAvailable" to get a list of available Time Zones
 
-# User for Azure Stack HCI LCM User (to be used later)
+# User for Azure Local LCM User (to be used later)
 $setupUser = "hciadmin"
 $setupPwd = "dgemsc#utquMHDHp3M"
 
@@ -485,10 +485,10 @@ try {
     exit 1
 }
 
-# Step 11: Install Azure Stack HCI AD Artifacts
+# Step 11: Install Azure Local AD Artifacts
 $currentStep++
-Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Installing Azure Stack HCI AD Artifacts..."
-Write-Message "Installing Azure Stack HCI AD Artifacts Pre-Creation Tool and creating AD objects..." -Type "Info"
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Installing Azure Local AD Artifacts..."
+Write-Message "Installing Azure Local AD Artifacts Pre-Creation Tool and creating AD objects..." -Type "Info"
 try {
     Invoke-Command -VMName $dcVMName -Credential $DomainAdminCredentials -ScriptBlock {
         param($setupUser, $setupPwd)
@@ -518,10 +518,10 @@ try {
                 Install-Module AsHciADArtifactsPreCreationTool -Repository PSGallery -Force -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
             }
 
-            # Define the OU path for Azure Stack HCI
+            # Define the OU path for Azure Local
             $AsHciOUPath = "OU=HCI,OU=Servers,OU=_LAB," + (Get-ADDomain).DistinguishedName
 
-            # Secure credentials for Azure Stack HCI user
+            # Secure credentials for Azure Local user
             $SecurePassword = ConvertTo-SecureString $setupPwd -AsPlainText -Force
             $AzureStackLCMUserCredential = New-Object System.Management.Automation.PSCredential ($setupUser, $SecurePassword)
 
@@ -535,9 +535,9 @@ try {
         }
     } -ArgumentList $setupUser, $setupPwd -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
 
-    Write-Message "Azure Stack HCI AD objects created successfully." -Type "Success"
+    Write-Message "Azure Local AD objects created successfully." -Type "Success"
 } catch {
-    Write-Message "Failed to create Azure Stack HCI AD objects. Error: $_" -Type "Error"
+    Write-Message "Failed to create Azure Local AD objects. Error: $_" -Type "Error"
     exit 1
 }
 

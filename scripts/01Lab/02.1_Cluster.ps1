@@ -1,0 +1,337 @@
+# 02_Cluster.ps1
+# Cluster Node Creation Script
+
+<#
+.SYNOPSIS
+    Configures the cluster node VM, sets up network settings, installs required features, and registers the node with Azure Arc.
+
+.DESCRIPTION
+    This script performs the following tasks:
+    - Sets up credentials and network configurations.
+    - Removes the ISO from the node VM.
+    - Renames the node VM.
+    - Configures network adapters with static IP settings.
+    - Installs required Windows features.
+    - Registers the node with Azure Arc.
+
+.NOTES
+    - Designed by Cristian Schmitt Nieto. For more information and usage, visit: https://schmitt-nieto.com/blog/azure-stack-hci-demolab/
+    - Run this script with administrative privileges.
+    - Ensure the Execution Policy allows the script to run. To set the execution policy, you can run:
+      Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+    - Updates:
+        - 2024/11/28: Changing Module Versions and ISO for 2411
+#>
+
+#region Variables
+
+# Credentials and User Configuration
+$defaultUser = "Administrator"
+$defaultPwd = "Start#1234"
+$DefaultSecuredPassword = ConvertTo-SecureString $defaultPwd -AsPlainText -Force
+$DefaultCredentials = New-Object System.Management.Automation.PSCredential ($defaultUser, $DefaultSecuredPassword)
+
+$setupUser = "Setupuser"
+$setupPwd = "dgemsc#utquMHDHp3M"
+
+# Node Configuration
+$nodeName = "NODE"
+$NIC1 = "MGMT1"
+$NIC2 = "MGMT2"
+$nic1IP = "172.19.19.10"
+$nic1GW = "172.19.19.1"
+$nic1DNS = "172.19.19.2"
+
+# Azure Configuration
+$Location = "westeurope"
+$Cloud = "AzureCloud"
+
+# Sleep durations in seconds
+$SleepRestart = 60    # Sleep after VM restart
+$SleepFeatures = 90   # Sleep after feature installation and restart
+$SleepModules = 30    # Sleep after module installation
+
+#endregion
+
+#region Functions
+
+# Function to Display Messages with Colors
+function Write-Message {
+    param (
+        [string]$Message,
+        [ValidateSet("Info", "Success", "Warning", "Error")]
+        [string]$Type = "Info"
+    )
+
+    switch ($Type) {
+        "Info"    { Write-Host $Message -ForegroundColor Cyan }
+        "Success" { Write-Host $Message -ForegroundColor Green }
+        "Warning" { Write-Host $Message -ForegroundColor Yellow }
+        "Error"   { Write-Host $Message -ForegroundColor Red }
+    }
+}
+
+# Function to Format MAC Addresses
+function Format-MacAddress {
+    param (
+        [string]$mac
+    )
+    return $mac.Insert(2,"-").Insert(5,"-").Insert(8,"-").Insert(11,"-").Insert(14,"-").ToUpper()
+}
+
+# Function to Update Progress Bar (Main Progress)
+function Update-ProgressBar {
+    param (
+        [int]$CurrentStep,
+        [int]$TotalSteps,
+        [string]$StatusMessage
+    )
+
+    $percent = [math]::Round(($CurrentStep / $TotalSteps) * 100)
+    Write-Progress -Id 1 -Activity "Overall Progress" -Status $StatusMessage -PercentComplete $percent
+}
+
+# Function to Start Sleep with Progress Message and Additional Progress Bar (Subtask)
+function Start-SleepWithProgress {
+    param(
+        [int]$Seconds,
+        [string]$Activity = "Waiting",
+        [string]$Status = "Please wait..."
+    )
+
+    Write-Message "$Activity : $Status" -Type "Info"
+
+    for ($i = 1; $i -le $Seconds; $i++) {
+        if ([Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq 'Spacebar') {
+                Write-Message "Sleep skipped by user." -Type "Warning"
+                break
+            }
+        }
+
+        $percent = [math]::Round(($i / $Seconds) * 100)
+        Write-Progress -Id 2 -Activity "Sleep Progress" -Status "$Activity : $i/$Seconds seconds elapsed... Use Spacebar to Break" -PercentComplete $percent
+        Start-Sleep -Seconds 1
+    }
+
+    Write-Progress -Id 2 -Activity "Sleep Progress" -Completed
+    Write-Message "$Activity : Completed." -Type "Success"
+} 
+
+# Function to Allow Selection from a List
+function Get-Option ($cmd, $filterproperty) {
+    $items = @("")
+    $selection = $null
+    $filteredItems = @()
+    $i = 0
+    Invoke-Expression -Command $cmd | Sort-Object $filterproperty | ForEach-Object {
+        $items += "{0}. {1}" -f $i, $_.$filterproperty
+        $i++
+    }
+    $filteredItems += $items | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    $filteredItems | Format-Wide { $_ } -Column 4 -Force | Out-Host
+    do {
+        $r = Read-Host "Select by number"
+        if ($r -match '^\d+$' -and $r -lt $filteredItems.Count) {
+            $selection = $filteredItems[$r] -split "\.\s" | Select-Object -Last 1
+            Write-Host "Selecting $($filteredItems[$r])" -ForegroundColor Green
+        } else {
+            Write-Host "You must make a valid selection" -ForegroundColor Red
+            $selection = $null
+        }
+    } until ($null -ne $selection)
+    return $selection
+}
+
+# Function to Attempt Azure Login with Retries
+function Connect-AzAccountWithRetry {
+    param(
+        [int]$MaxRetries = 3,
+        [int]$DelaySeconds = 20
+    )
+
+    $attempt = 0
+    while ($attempt -lt $MaxRetries) {
+        try {
+            Connect-AzAccount -UseDeviceAuthentication -ErrorAction Stop
+            Write-Message "Successfully connected to Azure." -Type "Success"
+            return
+        } catch {
+            $attempt++
+            Write-Message "Azure login attempt $attempt failed. Retrying in $DelaySeconds seconds..." -Type "Warning"
+            Start-Sleep -Seconds $DelaySeconds
+        }
+    }
+
+    Write-Message "Failed to connect to Azure after $MaxRetries attempts." -Type "Error"
+    exit 1
+}
+
+#endregion
+
+#region Script Execution
+
+# Total number of steps for progress calculation
+$totalSteps = 5
+$currentStep = 0
+
+# Step 1: Remove ISO from VM
+$currentStep++
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Removing ISO from VM..."
+Write-Message "Removing ISO from VM '$nodeName'..." -Type "Info"
+try {
+    Get-VMDvdDrive -VMName $nodeName | Where-Object { $_.DvdMediaType -eq "ISO" } | Remove-VMDvdDrive -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
+    Write-Message "ISO removed from VM '$nodeName'." -Type "Success"
+} catch {
+    Write-Message "Failed to remove ISO from VM '$nodeName'. Error: $_" -Type "Error"
+    exit 1
+}
+
+# Step 2: Create setup user and rename the node
+$currentStep++
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Creating setup user and renaming VM..."
+Write-Message "Creating setup user and renaming VM '$nodeName'..." -Type "Info"
+try {
+    Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
+        param($setupUser, $setupPwd, $nodeName)
+        $ErrorActionPreference = 'Stop'; $WarningPreference = 'SilentlyContinue'; $VerbosePreference = 'SilentlyContinue'; $ProgressPreference = 'SilentlyContinue'; $InformationPreference = 'SilentlyContinue'
+        Try {
+            New-LocalUser -Name $setupUser -Password (ConvertTo-SecureString $setupPwd -AsPlainText -Force) -FullName $setupUser -Description "Setup user" -ErrorAction Stop | Out-Null
+            Write-Host "User $setupUser created." -ForegroundColor Green | Out-Null
+            Add-LocalGroupMember -Group "Administrators" -Member $setupUser -ErrorAction Stop | Out-Null
+            Write-Host "User $setupUser added to Administrators." -ForegroundColor Green | Out-Null
+        } Catch {
+            Write-Host "Error occurred: $_" -ForegroundColor Red | Out-Null; throw $_
+        }
+        Rename-Computer -NewName $nodeName -Force -ErrorAction Stop | Out-Null
+        Restart-Computer -Force -ErrorAction Stop | Out-Null
+    } -ArgumentList $setupUser, $setupPwd, $nodeName -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
+    Write-Message "Setup user created and VM '$nodeName' is restarting..." -Type "Success"
+    Start-SleepWithProgress -Seconds $SleepRestart -Activity "Restarting VM" -Status "Waiting for VM to restart"
+} catch {
+    Write-Message "Failed to create setup user or rename VM '$nodeName'. Error: $_" -Type "Error"
+    exit 1
+}
+
+# Step 3: Retrieve and format MAC addresses of network adapters
+$currentStep++
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Retrieving and formatting MAC addresses..."
+Write-Message "Retrieving and formatting MAC addresses for VM '$nodeName'..." -Type "Info"
+try {
+    $nodeMacNIC1 = Get-VMNetworkAdapter -VMName $nodeName -Name $NIC1 -ErrorAction Stop
+    $nodeMacNIC1Address = Format-MacAddress $nodeMacNIC1.MacAddress
+    $nodeMacNIC2 = Get-VMNetworkAdapter -VMName $nodeName -Name $NIC2 -ErrorAction Stop
+    $nodeMacNIC2Address = Format-MacAddress $nodeMacNIC2.MacAddress
+    Write-Message "MAC addresses formatted successfully." -Type "Success"
+} catch {
+    Write-Message "Failed to retrieve or format MAC addresses. Error: $_" -Type "Error"
+    exit 1
+}
+
+# Step 4: Configure Network Settings
+$currentStep++
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Configuring network settings..."
+Write-Message "Configuring network settings for VM '$nodeName'..." -Type "Info"
+try {
+    Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
+        param($NIC1, $NIC2, $nodeMacNIC1Address, $nodeMacNIC2Address, $nic1IP, $nic1GW, $nic1DNS)
+        $ErrorActionPreference = 'Stop'; $WarningPreference = 'SilentlyContinue'; $VerbosePreference = 'SilentlyContinue'; $ProgressPreference = 'SilentlyContinue'; $InformationPreference = 'SilentlyContinue'
+        Get-NetAdapter -Physical | Where-Object { $_.MacAddress -eq $nodeMacNIC1Address } | Rename-NetAdapter -NewName $NIC1 -ErrorAction Stop | Out-Null
+        Get-NetAdapter -Physical | Where-Object { $_.MacAddress -eq $nodeMacNIC2Address } | Rename-NetAdapter -NewName $NIC2 -ErrorAction Stop | Out-Null
+        foreach ($nic in @($NIC1, $NIC2)) {
+            Set-NetIPInterface -InterfaceAlias $nic -Dhcp Disabled -ErrorAction Stop | Out-Null
+            Enable-NetAdapterRdma -Name $nic -ErrorAction Stop | Out-Null
+        }
+        New-NetIPAddress -InterfaceAlias $NIC1 -IPAddress $nic1IP -PrefixLength 24 -DefaultGateway $nic1GW -ErrorAction Stop | Out-Null
+        Set-DnsClientServerAddress -InterfaceAlias $NIC1 -ServerAddresses $nic1DNS -ErrorAction Stop | Out-Null
+        w32tm /config /manualpeerlist:$nic1DNS /syncfromflags:manual /update | Out-Null
+        Restart-Service w32time -Force | Out-Null
+        w32tm /resync | Out-Null
+        Set-TimeZone -Id "UTC"
+        Write-Host "Network settings configured." -ForegroundColor Green | Out-Null
+        Restart-Computer -Force -ErrorAction Stop | Out-Null
+    } -ArgumentList $NIC1, $NIC2, $nodeMacNIC1Address, $nodeMacNIC2Address, $nic1IP, $nic1GW, $nic1DNS -ErrorAction Stop | Out-Null
+    Write-Message "VM '$nodeName' is restarting..." -Type "Success"
+    Start-SleepWithProgress -Seconds $SleepFeatures -Activity "Restarting VM" -Status "Waiting for VM to restart"
+    Write-Message "Network settings configured successfully for VM '$nodeName'." -Type "Success"
+} catch {
+    Write-Message "Failed to configure network settings for VM '$nodeName'. Error: $_" -Type "Error"
+    exit 1
+}
+
+# Step 5: Invoke Azure Local Arc Initialization on the node
+$currentStep++
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Registering node with Azure Arc..."
+Write-Message "Registering VM '$nodeName' with Azure Arc..." -Type "Info"
+try {
+    Start-SleepWithProgress -Seconds $SleepModules -Activity "Waiting for PowerShell Modules" -Status "Preparing to register"
+    Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
+        param($Cloud, $Location)
+        # Function to Allow Selection from a List
+        function Get-Option ($cmd, $filterproperty) {
+            $items = @(""); $i = 0
+            Invoke-Expression -Command $cmd | Sort-Object $filterproperty | ForEach-Object {
+                $items += "{0}. {1}" -f $i, $_.$filterproperty; $i++
+            }
+            $items = $items | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            $items | Format-Wide -Column 4 | Out-Host
+            do {
+                $r = Read-Host "Select by number"
+                if ($r -match '^\d+$' -and $r -lt $items.Count) {
+                    $sel = $items[$r] -split "\.\s" | Select-Object -Last 1
+                    Write-Host "Selecting $sel" -ForegroundColor Green
+                } else {
+                    Write-Host "Invalid selection" -ForegroundColor Red
+                    $sel = $null
+                }
+            } until ($sel)
+            return $sel
+        }
+        # Function to Attempt Azure Login with Retries
+        function Connect-AzAccountWithRetry {
+            param($MaxRetries=5, $DelaySeconds=20)
+            $attempt=0
+            while ($attempt -lt $MaxRetries) {
+                try {
+                    Connect-AzAccount -UseDeviceAuthentication -ErrorAction Stop
+                    Write-Host "Connected to Azure." -ForegroundColor Green
+                    return
+                } catch {
+                    $attempt++; Write-Host "Login failed ($attempt). Retrying in $DelaySeconds sec..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds $DelaySeconds
+                }
+            }
+            Write-Host "Failed to connect after $MaxRetries attempts." -ForegroundColor Red
+            exit 1
+        }
+
+        # Connect and select resource group
+        Connect-AzAccountWithRetry
+        $resourceGroupName = Get-Option "Get-AzResourceGroup" "ResourceGroupName"
+        $TenantID = (Get-AzContext).Tenant.Id
+        $SubscriptionID = (Get-AzContext).Subscription.Id
+        $ARMToken = (Get-AzAccessToken).Token
+        $AccountId = (Get-AzContext).Account.Id
+
+        # Invoke Arc initialization
+        Invoke-AzStackHciArcInitialization -SubscriptionID $SubscriptionID `
+                                           -ResourceGroup $resourceGroupName `
+                                           -TenantID $TenantID `
+                                           -Cloud $Cloud `
+                                           -Region $Location `
+                                           -ArmAccessToken $ARMToken `
+                                           -AccountID $AccountId -ErrorAction Stop | Out-Null
+
+        Write-Host "VM '$env:COMPUTERNAME' registered with Azure Arc successfully." -ForegroundColor Green
+    } -ArgumentList $Cloud, $Location -ErrorAction Stop
+} catch {
+    Write-Message "Failed to register VM '$nodeName' with Azure Arc. Error: $_" -Type "Error"
+    exit 1
+}
+
+# Complete the overall progress bar
+Update-ProgressBar -CurrentStep $totalSteps -TotalSteps $totalSteps -StatusMessage "All tasks completed."
+Write-Message "Cluster node configuration completed successfully." -Type "Success"
+
+#endregion
