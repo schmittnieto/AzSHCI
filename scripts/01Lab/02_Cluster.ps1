@@ -21,6 +21,7 @@
       Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
     - Updates:
         - 2024/11/28: Changing Module Versions and ISO for 2411
+        - 2025/07/01: Update the scripts for version 2505
 #>
 
 #region Variables
