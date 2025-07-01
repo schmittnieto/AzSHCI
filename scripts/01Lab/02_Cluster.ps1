@@ -46,8 +46,8 @@ $nic1DNS = "172.19.19.2"
 # Azure Configuration
 $Location = "westeurope"
 $Cloud = "AzureCloud"
-$SubscriptionID = "000000-00000000000-000000"  # Replace with your actual Subscription ID
-$resourceGroupName = "yourResourceGroupName"  # Replace with your actual Resource Group Name
+$SubscriptionID = "00000-00000-00000-00000"  # Replace with your actual Subscription ID
+$resourceGroupName = "YourResourceGroup"  # Replace with your actual Resource Group Name
 
 # Sleep durations in seconds
 $SleepRestart = 60    # Sleep after VM restart
