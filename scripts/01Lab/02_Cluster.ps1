@@ -34,8 +34,6 @@ $DefaultCredentials = New-Object System.Management.Automation.PSCredential ($def
 
 $setupUser = "Setupuser"
 $setupPwd = "dgemsc#utquMHDHp3M"
-#$SecuredSetupPassword = ConvertTo-SecureString $setupPwd -AsPlainText -Force
-#$SetupCredentials = New-Object System.Management.Automation.PSCredential ($setupUser, $SecuredSetupPassword)
 
 # Node Configuration
 $nodeName = "NODE"
@@ -48,11 +46,13 @@ $nic1DNS = "172.19.19.2"
 # Azure Configuration
 $Location = "westeurope"
 $Cloud = "AzureCloud"
+$SubscriptionID = "000000-00000000000-000000"  # Replace with your actual Subscription ID
+$resourceGroupName = "yourResourceGroupName"  # Replace with your actual Resource Group Name
 
 # Sleep durations in seconds
 $SleepRestart = 60    # Sleep after VM restart
 $SleepFeatures = 90   # Sleep after feature installation and restart
-$SleepModules = 30   # Sleep after module installation
+$SleepModules = 10    # Sleep after module installation
 
 #endregion
 
@@ -72,9 +72,6 @@ function Write-Message {
         "Warning" { Write-Host $Message -ForegroundColor Yellow }
         "Error"   { Write-Host $Message -ForegroundColor Red }
     }
-
-    # Optional: Log messages to a file
-    # Add-Content -Path "C:\Path\To\Your\LogFile.txt" -Value "$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) [$Type] $Message"
 }
 
 # Function to Format MAC Addresses
@@ -108,7 +105,6 @@ function Start-SleepWithProgress {
     Write-Message "$Activity : $Status" -Type "Info"
 
     for ($i = 1; $i -le $Seconds; $i++) {
-        # Check if a key has been pressed
         if ([Console]::KeyAvailable) {
             $key = [Console]::ReadKey($true)
             if ($key.Key -eq 'Spacebar') {
@@ -126,61 +122,12 @@ function Start-SleepWithProgress {
     Write-Message "$Activity : Completed." -Type "Success"
 } 
 
-# Function to Allow Selection from a List
-function Get-Option ($cmd, $filterproperty) {
-    $items = @("")
-    $selection = $null
-    $filteredItems = @()
-    $i = 0
-    Invoke-Expression -Command $cmd | Sort-Object $filterproperty | ForEach-Object -Process {
-        $items += "{0}. {1}" -f $i, $_.$filterproperty
-        $i++
-    }
-    $filteredItems += $items | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-    $filteredItems | Format-Wide { $_ } -Column 4 -Force | Out-Host
-    do {
-        $r = Read-Host "Select by number"
-        if ($r -match '^\d+$' -and $r -lt $filteredItems.Count) {
-            $selection = $filteredItems[$r] -split "\.\s" | Select-Object -Last 1
-            Write-Host "Selecting $($filteredItems[$r])" -ForegroundColor Green
-        } else {
-            Write-Host "You must make a valid selection" -ForegroundColor Red
-            $selection = $null
-        }
-    } until ($null -ne $selection)
-    return $selection
-}
-
-# Function to Attempt Azure Login with Retries
-function Connect-AzAccountWithRetry {
-    param(
-        [int]$MaxRetries = 3,
-        [int]$DelaySeconds = 20  # Increased from 10 to 20 seconds
-    )
-
-    $attempt = 0
-    while ($attempt -lt $MaxRetries) {
-        try {
-            Connect-AzAccount -UseDeviceAuthentication -ErrorAction Stop
-            Write-Message "Successfully connected to Azure." -Type "Success"
-            return
-        } catch {
-            $attempt++
-            Write-Message "Azure login attempt $attempt failed. Retrying in $DelaySeconds seconds..." -Type "Warning"
-            Start-Sleep -Seconds $DelaySeconds
-        }
-    }
-
-    Write-Message "Failed to connect to Azure after $MaxRetries attempts." -Type "Error"
-    exit 1
-}
-
 #endregion
 
 #region Script Execution
 
 # Total number of steps for progress calculation
-$totalSteps = 8
+$totalSteps = 5
 $currentStep = 0
 
 # Step 1: Remove ISO from VM
@@ -202,34 +149,20 @@ Write-Message "Creating setup user and renaming VM '$nodeName'..." -Type "Info"
 try {
     Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
         param($setupUser, $setupPwd, $nodeName)
-        $ErrorActionPreference = 'Stop'
-        $WarningPreference = 'SilentlyContinue'
-        $VerbosePreference = 'SilentlyContinue'
-        $ProgressPreference = 'SilentlyContinue'
-        $InformationPreference = 'SilentlyContinue'
-
-        # Suppress all non-essential outputs
+        $ErrorActionPreference = 'Stop'; $WarningPreference = 'SilentlyContinue'; $VerbosePreference = 'SilentlyContinue'; $ProgressPreference = 'SilentlyContinue'; $InformationPreference = 'SilentlyContinue'
         Try {
-            # Create local user
             New-LocalUser -Name $setupUser -Password (ConvertTo-SecureString $setupPwd -AsPlainText -Force) -FullName $setupUser -Description "Setup user" -ErrorAction Stop | Out-Null
-            Write-Host "User $setupUser created successfully." -ForegroundColor Green | Out-Null
-
-            # Add user to Administrators group
+            Write-Host "User $setupUser created." -ForegroundColor Green | Out-Null
             Add-LocalGroupMember -Group "Administrators" -Member $setupUser -ErrorAction Stop | Out-Null
-            Write-Host "User $setupUser added to Administrators group." -ForegroundColor Green | Out-Null
+            Write-Host "User $setupUser added to Administrators." -ForegroundColor Green | Out-Null
         } Catch {
-            Write-Host "Error occurred: $_" -ForegroundColor Red | Out-Null
-            throw $_
+            Write-Host "Error occurred: $_" -ForegroundColor Red | Out-Null; throw $_
         }
-
-        # Rename computer
         Rename-Computer -NewName $nodeName -Force -ErrorAction Stop | Out-Null
-
-        # Restart computer
         Restart-Computer -Force -ErrorAction Stop | Out-Null
-    } -ArgumentList $setupUser, $setupPwd, $nodeName -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
+    } -ArgumentList $setupUser, $setupPwd, $nodeName -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
     Write-Message "Setup user created and VM '$nodeName' is restarting..." -Type "Success"
-    Start-SleepWithProgress -Seconds $SleepRestart -Activity "Restarting VM" -Status "Waiting for VM to restart" # 20 Seconds
+    Start-SleepWithProgress -Seconds $SleepRestart -Activity "Restarting VM" -Status "Waiting for VM to restart"
 } catch {
     Write-Message "Failed to create setup user or rename VM '$nodeName'. Error: $_" -Type "Error"
     exit 1
@@ -242,13 +175,11 @@ Write-Message "Retrieving and formatting MAC addresses for VM '$nodeName'..." -T
 try {
     $nodeMacNIC1 = Get-VMNetworkAdapter -VMName $nodeName -Name $NIC1 -ErrorAction Stop
     $nodeMacNIC1Address = Format-MacAddress $nodeMacNIC1.MacAddress
-
     $nodeMacNIC2 = Get-VMNetworkAdapter -VMName $nodeName -Name $NIC2 -ErrorAction Stop
     $nodeMacNIC2Address = Format-MacAddress $nodeMacNIC2.MacAddress
-
     Write-Message "MAC addresses formatted successfully." -Type "Success"
 } catch {
-    Write-Message "Failed to retrieve or format MAC addresses for VM '$nodeName'. Error: $_" -Type "Error"
+    Write-Message "Failed to retrieve or format MAC addresses. Error: $_" -Type "Error"
     exit 1
 }
 
@@ -259,36 +190,22 @@ Write-Message "Configuring network settings for VM '$nodeName'..." -Type "Info"
 try {
     Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
         param($NIC1, $NIC2, $nodeMacNIC1Address, $nodeMacNIC2Address, $nic1IP, $nic1GW, $nic1DNS)
-        $ErrorActionPreference = 'Stop'
-        $WarningPreference = 'SilentlyContinue'
-        $VerbosePreference = 'SilentlyContinue'
-        $ProgressPreference = 'SilentlyContinue'
-        $InformationPreference = 'SilentlyContinue'
-
-        # Suppress all non-essential outputs
-
-        # Rename network adapters based on MAC addresses
+        $ErrorActionPreference = 'Stop'; $WarningPreference = 'SilentlyContinue'; $VerbosePreference = 'SilentlyContinue'; $ProgressPreference = 'SilentlyContinue'; $InformationPreference = 'SilentlyContinue'
         Get-NetAdapter -Physical | Where-Object { $_.MacAddress -eq $nodeMacNIC1Address } | Rename-NetAdapter -NewName $NIC1 -ErrorAction Stop | Out-Null
         Get-NetAdapter -Physical | Where-Object { $_.MacAddress -eq $nodeMacNIC2Address } | Rename-NetAdapter -NewName $NIC2 -ErrorAction Stop | Out-Null
-
-        # Disable DHCP and enable RDMA on both NICs
         foreach ($nic in @($NIC1, $NIC2)) {
             Set-NetIPInterface -InterfaceAlias $nic -Dhcp Disabled -ErrorAction Stop | Out-Null
             Enable-NetAdapterRdma -Name $nic -ErrorAction Stop | Out-Null
         }
-
-        # Configure static IP on NIC1
-        New-NetIPAddress -InterfaceAlias $NIC1 -IPAddress $nic1IP -PrefixLength 24 -AddressFamily IPv4 -DefaultGateway $nic1GW -ErrorAction Stop | Out-Null
+        New-NetIPAddress -InterfaceAlias $NIC1 -IPAddress $nic1IP -PrefixLength 24 -DefaultGateway $nic1GW -ErrorAction Stop | Out-Null
         Set-DnsClientServerAddress -InterfaceAlias $NIC1 -ServerAddresses $nic1DNS -ErrorAction Stop | Out-Null
-
-        # Configure time synchronization
         w32tm /config /manualpeerlist:$nic1DNS /syncfromflags:manual /update | Out-Null
         Restart-Service w32time -Force | Out-Null
         w32tm /resync | Out-Null
         Set-TimeZone -Id "UTC"
-        Write-Host "Network settings configured successfully." -ForegroundColor Green | Out-Null
+        Write-Host "Network settings configured." -ForegroundColor Green | Out-Null
         Restart-Computer -Force -ErrorAction Stop | Out-Null
-    } -ArgumentList $NIC1, $NIC2, $nodeMacNIC1Address, $nodeMacNIC2Address, $nic1IP, $nic1GW, $nic1DNS -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
+    } -ArgumentList $NIC1, $NIC2, $nodeMacNIC1Address, $nodeMacNIC2Address, $nic1IP, $nic1GW, $nic1DNS -ErrorAction Stop | Out-Null
     Write-Message "VM '$nodeName' is restarting..." -Type "Success"
     Start-SleepWithProgress -Seconds $SleepFeatures -Activity "Restarting VM" -Status "Waiting for VM to restart"
     Write-Message "Network settings configured successfully for VM '$nodeName'." -Type "Success"
@@ -297,189 +214,46 @@ try {
     exit 1
 }
 
-<#  
-
-# Step 5: Install required Windows Features
-$currentStep++
-Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Installing required Windows features..."
-Write-Message "Installing required Windows features on VM '$nodeName'..." -Type "Info"
-try {
-    Invoke-Command -VMName $nodeName -Credential $SetupCredentials -ScriptBlock {
-        $ErrorActionPreference = 'Stop'
-        $WarningPreference = 'SilentlyContinue'
-        $VerbosePreference = 'SilentlyContinue'
-        $ProgressPreference = 'SilentlyContinue'
-        $InformationPreference = 'SilentlyContinue'
-
-        # Suppress all non-essential outputs
-
-        # Enable Hyper-V
-        Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All -NoRestart -ErrorAction Stop | Out-Null
-
-        # Install additional features (Not needed Anymore)
-        # Install-WindowsFeature -Name Hyper-V, Failover-Clustering, Data-Center-Bridging, BitLocker, FS-FileServer, RSAT-Clustering-PowerShell, FS-Data-Deduplication -IncludeAllSubFeature -IncludeManagementTools -ErrorAction Stop | Out-Null
-
-        # Restart to apply changes
-        Restart-Computer -Force -ErrorAction Stop | Out-Null
-    } -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
-    Write-Message "Required Windows features installed and VM '$nodeName' is restarting..." -Type "Success"
-    Start-SleepWithProgress -Seconds $SleepFeatures -Activity "Restarting VM" -Status "Waiting for VM to restart" # 40 Seconds
-} catch {
-    Write-Message "Failed to install Windows features on VM '$nodeName'. Error: $_" -Type "Error"
-    exit 1
-}
-
-# Step 6: Register PSGallery as a trusted repository on the node
-$currentStep++
-Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Registering PSGallery on VM..."
-Write-Message "Registering PSGallery as a trusted repository on VM '$nodeName'..." -Type "Info"
-try {
-    Invoke-Command -VMName $nodeName -Credential $SetupCredentials -ScriptBlock {
-        param($NIC1)
-
-        $ErrorActionPreference = 'Stop'
-        $WarningPreference = 'SilentlyContinue'
-        $VerbosePreference = 'SilentlyContinue'
-        $ProgressPreference = 'SilentlyContinue'
-        $InformationPreference = 'SilentlyContinue'
-
-        # Suppress all non-essential outputs
-
-        if (-not (Get-PSRepository -Name "PSGallery" -ErrorAction SilentlyContinue)) {
-            Register-PSRepository -Default -ErrorAction Stop | Out-Null
-        }
-        Set-PSRepository -Name "PSGallery" -InstallationPolicy Trusted -ErrorAction Stop | Out-Null
-        Write-Host "PSGallery registered as a trusted repository." -ForegroundColor Green | Out-Null
-    } -ArgumentList $NIC1 -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
-    Write-Message "PSGallery registered successfully on VM '$nodeName'." -Type "Success"
-} catch {
-    Write-Message "Failed to register PSGallery on VM '$nodeName'. Error: $_" -Type "Error"
-    exit 1
-}
-
-#>
-
-<#
-# Step 7: Install required PowerShell modules on the node for Azure Arc registration
-$currentStep++
-Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Installing required PowerShell modules..."
-Write-Message "Installing required PowerShell modules on VM '$nodeName'..." -Type "Info"
-try {
-    Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
-        param($NIC1)
-
-        $ErrorActionPreference = 'Stop'
-        $WarningPreference = 'SilentlyContinue'
-        $VerbosePreference = 'SilentlyContinue'
-        $ProgressPreference = 'SilentlyContinue'
-        $InformationPreference = 'SilentlyContinue'
-
-        # Suppress all non-essential outputs
-
-        # Install required modules
-        
-        # Install-Module Az.Accounts -Force -ErrorAction Stop | Out-Null
-        # Install-Module Az.Resources -Force -ErrorAction Stop | Out-Null
-        # Install-Module Az.ConnectedMachine -Force -ErrorAction Stop | Out-Null
-        Install-Module AzsHCI.ArcInstaller -Force -ErrorAction Stop -AllowClobber | Out-Null
-        # Specific version for Az.Accounts https://github.com/Azure/AzureLocal-Supportability/blob/58de059cbd11c5a4dedcd4c0f1fffe7dc2fd241c/TSG/ArcRegistration/TSG-Arc-registration-failing-with-error-42.md
-        # Uninstall any existing Az.Accounts module versions except 4.0.2
-        Get-InstalledModule -Name Az.Accounts -AllVersions | Where-Object { $_.Version -ne '4.0.2' } | ForEach-Object { Uninstall-Module -Name Az.Accounts -RequiredVersion $_.Version -Force }
-        # Install the specific version of Az.Accounts
-        Install-Module -Name Az.Accounts -RequiredVersion 4.0.2 -Force | Out-Null
-        Write-Host "Required PowerShell modules installed successfully." -ForegroundColor Green | Out-Null
-    } -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
-    Write-Message "PowerShell modules installed successfully on VM '$nodeName'." -Type "Success"
-} catch {
-    Write-Message "Failed to install PowerShell modules on VM '$nodeName'. Error: $_" -Type "Error"
-    exit 1
-}
-#>
-
-# Step 8: Invoke Azure Local Arc Initialization on the node
+# Step 5: Invoke Azure Local Arc Initialization on the node
 $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Registering node with Azure Arc..."
 Write-Message "Registering VM '$nodeName' with Azure Arc..." -Type "Info"
-
 try {
-    # Connect to Azure and set context
-    Start-SleepWithProgress -Seconds $SleepModules -Activity "Waiting for Powershell Modules" -Status "Waiting for Powershell Modules Start"
-    Connect-AzAccountWithRetry -MaxRetries 5 -DelaySeconds 20  # Increased DelaySeconds to 20
-
-    # Allow user to select Subscription (Not needed Anymore)
-    # $subscription = Get-Option "Get-AzSubscription" "Name"
-    # Set-AzContext -SubscriptionName $subscription -ErrorAction Stop
-
-    # Allow user to select Resource Group
-    $resourceGroupName = Get-Option "Get-AzResourceGroup" "ResourceGroupName"
-
-    $TenantID = (Get-AzContext).Tenant.Id
-    $SubscriptionID = (Get-AzContext).Subscription.Id
-    $ARMToken = (Get-AzAccessToken).Token
-    $AccountId = (Get-AzContext).Account.Id
-
-    # Prepare the script to run on the node
-    $ArcInitScript = @'
-param($SubscriptionID, $ResourceGroupName, $TenantID, $Cloud, $Location, $ARMToken, $AccountId)
-
-# Import modules (not needed) 
-# Import-Module Az.Accounts -ErrorAction Stop
-# Import-Module Az.Resources -ErrorAction Stop
-# Import-Module Az.ConnectedMachine -ErrorAction Stop
-# Import-Module AzsHCI.ArcInstaller -ErrorAction Stop
-
-# Suppress all non-essential outputs
-$ErrorActionPreference = 'Stop'
-$WarningPreference = 'SilentlyContinue'
-$VerbosePreference = 'SilentlyContinue'
-$InformationPreference = 'SilentlyContinue'
-
-# Invoke Arc Initialization
-Invoke-AzStackHciArcInitialization -SubscriptionID $SubscriptionID `
-                                   -ResourceGroup $ResourceGroupName `
-                                   -TenantID $TenantID `
-                                   -Cloud $Cloud `
-                                   -Region $Location `
-                                   -ArmAccessToken $ARMToken `
-                                   -AccountID $AccountId -ErrorAction Stop | Out-Null
-
-Write-Host "VM '$env:COMPUTERNAME' registered with Azure Arc successfully." -ForegroundColor Green | Out-Null
-'@
-    
-    # Copy the script to the node
-    $ScriptPath = "C:\Temp\ArcInitScript.ps1"
+    Start-SleepWithProgress -Seconds $SleepModules -Activity "Waiting for PowerShell Modules" -Status "Preparing to register"
     Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
-        param($ScriptContent, $ScriptPath)
-        $ErrorActionPreference = 'Stop'
-        $WarningPreference = 'SilentlyContinue'
-        $VerbosePreference = 'SilentlyContinue'
-        $ProgressPreference = 'SilentlyContinue'
-        $InformationPreference = 'SilentlyContinue'
+        param($Cloud, $Location, $SubscriptionID, $resourceGroupName)
 
-        # Suppress all non-essential outputs
+        # Install required modules
+        $requiredModules = @("Az.Accounts")        
+        foreach ($module in $requiredModules) {
+            if (-not (Get-Module -Name $module -ListAvailable)) {
+                Write-Host "Installing module: $module" -ForegroundColor Cyan
+                Install-Module -Name $module -RequiredVersion 4.0.2 -Force -ErrorAction Stop | Out-Null
+                Start-SleepWithProgress -Seconds $SleepModules -Activity "Installing Module" -Status "Waiting for module installation"
+            } else {
+                Write-Host "Module $module is already installed." -ForegroundColor Green
+            }
+        }
+        # Connect and select resource group
+        Connect-AzAccount -UseDeviceAuthentication -Subscription $SubscriptionID -ErrorAction Stop
+        $TenantID = (Get-AzContext).Tenant.Id
+        $SubscriptionID = (Get-AzContext).Subscription.Id
+        $ARMToken = (Get-AzAccessToken).Token
+        $AccountId = (Get-AzContext).Account.Id
 
-        New-Item -Path (Split-Path $ScriptPath) -ItemType Directory -Force | Out-Null
-        Set-Content -Path $ScriptPath -Value $ScriptContent -Force | Out-Null
-    } -ArgumentList $ArcInitScript, $ScriptPath -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
+        Get-ScheduledTask -TaskName ImageCustomizationScheduledTask | Start-ScheduledTask
+        Start-Sleep -Seconds 20
+        # Invoke Arc initialization
+        Invoke-AzStackHciArcInitialization -SubscriptionID $SubscriptionID `
+                                           -ResourceGroup $resourceGroupName `
+                                           -TenantID $TenantID `
+                                           -Cloud $Cloud `
+                                           -Region $Location `
+                                           -ArmAccessToken $ARMToken `
+                                           -AccountID $AccountId -ErrorAction Stop | Out-Null
 
-    # Run the script locally on the node
-    Start-SleepWithProgress -Seconds 10 -Activity "Waiting for Parameters" -Status "Waiting for Parameters" 
-    Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
-        param($ScriptPath, $SubscriptionID, $ResourceGroupName, $TenantID, $Cloud, $Location, $ARMToken, $AccountId)
-        $ErrorActionPreference = 'Stop'
-        $WarningPreference = 'SilentlyContinue'
-        $VerbosePreference = 'SilentlyContinue'
-        $ProgressPreference = 'SilentlyContinue'
-        $InformationPreference = 'SilentlyContinue'
-
-        # Suppress all non-essential outputs
-        start-sleep 3
-        # Execute the script locally
-        & $ScriptPath -SubscriptionID $SubscriptionID -ResourceGroupName $ResourceGroupName -TenantID $TenantID -Cloud $Cloud -Location $Location -ARMToken $ARMToken -AccountId $AccountId # | Out-Null
-        start-sleep 3
-    } -ArgumentList $ScriptPath, $SubscriptionID, $ResourceGroupName, $TenantID, $Cloud, $Location, $ARMToken, $AccountId -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false # | Out-Null
-
-    # Write-Message "VM '$nodeName' registered successfully with Azure Arc." -Type "Success"
+        Write-Host "VM '$env:COMPUTERNAME' registered with Azure Arc successfully." -ForegroundColor Green
+    } -ArgumentList $Cloud, $Location, $SubscriptionID, $resourceGroupName -ErrorAction Stop
 } catch {
     Write-Message "Failed to register VM '$nodeName' with Azure Arc. Error: $_" -Type "Error"
     exit 1
@@ -487,8 +261,6 @@ Write-Host "VM '$env:COMPUTERNAME' registered with Azure Arc successfully." -For
 
 # Complete the overall progress bar
 Update-ProgressBar -CurrentStep $totalSteps -TotalSteps $totalSteps -StatusMessage "All tasks completed."
-
-# Write-Host "Cluster node configuration completed successfully." -ForegroundColor Green
 Write-Message "Cluster node configuration completed successfully." -Type "Success"
 
 #endregion
