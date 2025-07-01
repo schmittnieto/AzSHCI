@@ -46,12 +46,12 @@ $nic1DNS = "172.19.19.2"
 # Azure Configuration
 $Location = "westeurope"
 $Cloud = "AzureCloud"
-$SubscriptionID = "00000-00000-00000-00000"  # Replace with your actual Subscription ID
-$resourceGroupName = "YourResourceGroup"  # Replace with your actual Resource Group Name
+$SubscriptionID = "000000-00000-000000-00000-0000000"  # Replace with your actual Subscription ID
+$resourceGroupName = "YourResourceGroupName"  # Replace with your actual Resource Group Name
 
 # Sleep durations in seconds
-$SleepRestart = 60    # Sleep after VM restart
-$SleepFeatures = 90   # Sleep after feature installation and restart
+$SleepRestart = 30    # Sleep after VM restart
+$SleepFeatures = 30   # Sleep after feature installation and restart
 $SleepModules = 10    # Sleep after module installation
 
 #endregion
@@ -229,8 +229,7 @@ try {
             if (-not (Get-Module -Name $module -ListAvailable)) {
                 Write-Host "Installing module: $module" -ForegroundColor Cyan
                 Install-Module -Name $module -RequiredVersion 4.0.2 -Force -ErrorAction Stop | Out-Null
-                Start-SleepWithProgress -Seconds $SleepModules -Activity "Installing Module" -Status "Waiting for module installation"
-            } else {
+              } else {
                 Write-Host "Module $module is already installed." -ForegroundColor Green
             }
         }
@@ -242,6 +241,7 @@ try {
         $AccountId = (Get-AzContext).Account.Id
 
         Get-ScheduledTask -TaskName ImageCustomizationScheduledTask | Start-ScheduledTask
+        Write-Host "Waiting for Image Customization Task to complete..." -ForegroundColor Cyan
         Start-Sleep -Seconds 20
         # Invoke Arc initialization
         Invoke-AzStackHciArcInitialization -SubscriptionID $SubscriptionID `
