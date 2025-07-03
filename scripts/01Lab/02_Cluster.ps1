@@ -22,6 +22,7 @@
     - Updates:
         - 2024/11/28: Changing Module Versions and ISO for 2411
         - 2025/07/01: Update the scripts for version 2505
+        - 2025/07/03: Update the scripts for version 2506
 #>
 
 #region Variables
@@ -50,9 +51,9 @@ $SubscriptionID = "000000-00000-000000-00000-0000000"  # Replace with your actua
 $resourceGroupName = "YourResourceGroupName"  # Replace with your actual Resource Group Name
 
 # Sleep durations in seconds
-$SleepRestart = 30    # Sleep after VM restart
-$SleepFeatures = 30   # Sleep after feature installation and restart
-$SleepModules = 10    # Sleep after module installation
+$SleepRestart = 60    # Sleep after VM restart
+$SleepFeatures = 60   # Sleep after feature installation and restart
+$SleepModules = 60    # Sleep after module installation
 
 #endregion
 
@@ -159,7 +160,7 @@ try {
             Write-Host "Error occurred: $_" -ForegroundColor Red | Out-Null; throw $_
         }
         Rename-Computer -NewName $nodeName -Force -ErrorAction Stop | Out-Null
-        Restart-Computer -Force -ErrorAction Stop | Out-Null
+        Restart-Computer -ErrorAction Stop | Out-Null
     } -ArgumentList $setupUser, $setupPwd, $nodeName -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
     Write-Message "Setup user created and VM '$nodeName' is restarting..." -Type "Success"
     Start-SleepWithProgress -Seconds $SleepRestart -Activity "Restarting VM" -Status "Waiting for VM to restart"
@@ -204,7 +205,7 @@ try {
         w32tm /resync | Out-Null
         Set-TimeZone -Id "UTC"
         Write-Host "Network settings configured." -ForegroundColor Green | Out-Null
-        Restart-Computer -Force -ErrorAction Stop | Out-Null
+        Restart-Computer -ErrorAction Stop | Out-Null
     } -ArgumentList $NIC1, $NIC2, $nodeMacNIC1Address, $nodeMacNIC2Address, $nic1IP, $nic1GW, $nic1DNS -ErrorAction Stop | Out-Null
     Write-Message "VM '$nodeName' is restarting..." -Type "Success"
     Start-SleepWithProgress -Seconds $SleepFeatures -Activity "Restarting VM" -Status "Waiting for VM to restart"
@@ -223,18 +224,21 @@ try {
     Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
         param($Cloud, $Location, $SubscriptionID, $resourceGroupName)
 
-        # Install required modules
+        <# Install required modules
         $requiredModules = @("Az.Accounts")        
         foreach ($module in $requiredModules) {
             if (-not (Get-Module -Name $module -ListAvailable)) {
-                Write-Host "Installing module: $module" -ForegroundColor Cyan
+                Write-Host "Installing module: $module 4.0.2" -ForegroundColor Cyan
                 Install-Module -Name $module -RequiredVersion 4.0.2 -Force -ErrorAction Stop | Out-Null
               } else {
                 Write-Host "Module $module is already installed." -ForegroundColor Green
             }
         }
+        #>
         # Connect and select resource group
+        Start-Sleep -Seconds 2
         Connect-AzAccount -UseDeviceAuthentication -Subscription $SubscriptionID -ErrorAction Stop
+        Start-Sleep -Seconds 1
         $TenantID = (Get-AzContext).Tenant.Id
         $SubscriptionID = (Get-AzContext).Subscription.Id
         $ARMToken = (Get-AzAccessToken).Token
