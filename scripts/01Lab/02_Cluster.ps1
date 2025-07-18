@@ -244,7 +244,7 @@ try {
         $ARMToken = (Get-AzAccessToken).Token
         $AccountId = (Get-AzContext).Account.Id
         Start-Sleep -Seconds 10
-
+        
         $task = Get-ScheduledTask -TaskName ImageCustomizationScheduledTask
         if ($task.State -eq 'Ready') {
             Start-ScheduledTask -InputObject $task
