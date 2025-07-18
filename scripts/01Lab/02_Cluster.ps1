@@ -243,10 +243,17 @@ try {
         $SubscriptionID = (Get-AzContext).Subscription.Id
         $ARMToken = (Get-AzAccessToken).Token
         $AccountId = (Get-AzContext).Account.Id
+        Start-Sleep -Seconds 10
 
-        Get-ScheduledTask -TaskName ImageCustomizationScheduledTask | Start-ScheduledTask
-        Write-Host "Waiting for Image Customization Task to complete..." -ForegroundColor Cyan
-        Start-Sleep -Seconds 20
+        $task = Get-ScheduledTask -TaskName ImageCustomizationScheduledTask
+        if ($task.State -eq 'Ready') {
+            Start-ScheduledTask -InputObject $task
+            Write-Host "ImageCustomizationScheduledTask was in 'Ready' state and has been started." -ForegroundColor Cyan
+        } else {
+            Write-Host "ImageCustomizationScheduledTask is not in 'Ready' state (current state: $($task.State)). Skipping start." -ForegroundColor Yellow
+        }
+        # Ensure the Azure Arc module is available
+        Start-Sleep -Seconds 40
         # Invoke Arc initialization
         Invoke-AzStackHciArcInitialization -SubscriptionID $SubscriptionID `
                                            -ResourceGroup $resourceGroupName `
@@ -259,7 +266,7 @@ try {
         Write-Host "VM '$env:COMPUTERNAME' registered with Azure Arc successfully." -ForegroundColor Green
     } -ArgumentList $Cloud, $Location, $SubscriptionID, $resourceGroupName -ErrorAction Stop
 } catch {
-    Write-Message "Failed to register VM '$nodeName' with Azure Arc. Error: $_" -Type "Error"
+    Write-Message "Version 2506 it´s a false postive error message: Failed to register VM '$nodeName' with Azure Arc. Error: $_" -Type "Error"
     exit 1
 }
 
