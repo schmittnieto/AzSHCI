@@ -160,7 +160,7 @@ try {
             Write-Host "Error occurred: $_" -ForegroundColor Red | Out-Null; throw $_
         }
         Rename-Computer -NewName $nodeName -Force -ErrorAction Stop | Out-Null
-        Restart-Computer -ErrorAction Stop | Out-Null
+        Restart-Computer -ErrorAction Stop -Force | Out-Null
     } -ArgumentList $setupUser, $setupPwd, $nodeName -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
     Write-Message "Setup user created and VM '$nodeName' is restarting..." -Type "Success"
     Start-SleepWithProgress -Seconds $SleepRestart -Activity "Restarting VM" -Status "Waiting for VM to restart"
