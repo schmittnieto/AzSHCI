@@ -23,6 +23,8 @@
         - 2024/11/28: Changing Module Versions and ISO for 2411
         - 2025/07/01: Update the scripts for version 2505
         - 2025/07/03: Update the scripts for version 2506
+        - 2025/08/26: Update the scripts for version 2508
+        - 2025/09/15: Arc initialization now runs on node without ArmAccessToken or AccountID
 #>
 
 #region Variables
@@ -49,6 +51,7 @@ $Location = "westeurope"
 $Cloud = "AzureCloud"
 $SubscriptionID = "000000-00000-000000-00000-0000000"  # Replace with your actual Subscription ID
 $resourceGroupName = "YourResourceGroupName"  # Replace with your actual Resource Group Name
+$TenantID = "000000-00000-000000-00000-0000000"  # Replace with your actual Tenant ID
 
 # Sleep durations in seconds
 $SleepRestart = 60    # Sleep after VM restart
@@ -223,50 +226,31 @@ try {
     Start-SleepWithProgress -Seconds $SleepModules -Activity "Waiting for PowerShell Modules" -Status "Preparing to register"
     Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
         param($Cloud, $Location, $SubscriptionID, $resourceGroupName)
-
-        <# Install required modules
-        $requiredModules = @("Az.Accounts")        
-        foreach ($module in $requiredModules) {
-            if (-not (Get-Module -Name $module -ListAvailable)) {
-                Write-Host "Installing module: $module 4.0.2" -ForegroundColor Cyan
-                Install-Module -Name $module -RequiredVersion 4.0.2 -Force -ErrorAction Stop | Out-Null
-              } else {
-                Write-Host "Module $module is already installed." -ForegroundColor Green
-            }
-        }
-        #>
-        # Connect and select resource group
-        Start-Sleep -Seconds 2
-        Connect-AzAccount -UseDeviceAuthentication -Subscription $SubscriptionID -ErrorAction Stop
-        Start-Sleep -Seconds 1
-        $TenantID = (Get-AzContext).Tenant.Id
-        $SubscriptionID = (Get-AzContext).Subscription.Id
-        $ARMToken = (Get-AzAccessToken).Token
-        $AccountId = (Get-AzContext).Account.Id
-        Start-Sleep -Seconds 10
-        
-        $task = Get-ScheduledTask -TaskName ImageCustomizationScheduledTask
-        if ($task.State -eq 'Ready') {
+        <#
+        # Optional: start image customization task if present
+        $task = Get-ScheduledTask -TaskName ImageCustomizationScheduledTask -ErrorAction SilentlyContinue
+        if ($task -and $task.State -eq 'Ready') {
             Start-ScheduledTask -InputObject $task
             Write-Host "ImageCustomizationScheduledTask was in 'Ready' state and has been started." -ForegroundColor Cyan
         } else {
-            Write-Host "ImageCustomizationScheduledTask is not in 'Ready' state (current state: $($task.State)). Skipping start." -ForegroundColor Yellow
+            Write-Host "ImageCustomizationScheduledTask not started or not present." -ForegroundColor Yellow
         }
-        # Ensure the Azure Arc module is available
-        Start-Sleep -Seconds 40
-        # Invoke Arc initialization
+        #>
+        # Ensure modules are ready
+        Start-Sleep -Seconds 20
+
+        # Register directly on the node without ArmAccessToken or AccountID
         Invoke-AzStackHciArcInitialization -SubscriptionID $SubscriptionID `
                                            -ResourceGroup $resourceGroupName `
                                            -TenantID $TenantID `
                                            -Cloud $Cloud `
                                            -Region $Location `
-                                           -ArmAccessToken $ARMToken `
-                                           -AccountID $AccountId -ErrorAction Stop | Out-Null
+                                           -ErrorAction Stop | Out-Null
 
         Write-Host "VM '$env:COMPUTERNAME' registered with Azure Arc successfully." -ForegroundColor Green
-    } -ArgumentList $Cloud, $Location, $SubscriptionID, $resourceGroupName -ErrorAction Stop
+    } -ArgumentList $Cloud, $Location, $SubscriptionID, $resourceGroupName, $TenantID -ErrorAction Stop | Out-Null
 } catch {
-    Write-Message "Version 2506 it´s a false postive error message: Failed to register VM '$nodeName' with Azure Arc. Error: $_" -Type "Error"
+    Write-Message "Failed to register VM '$nodeName' with Azure Arc. Error: $_" -Type "Error"
     exit 1
 }
 
