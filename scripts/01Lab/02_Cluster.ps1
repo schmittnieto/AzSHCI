@@ -39,7 +39,7 @@ $setupUser = "Setupuser"
 $setupPwd = "dgemsc#utquMHDHp3M"
 
 # Node Configuration
-$nodeName = "NODE"
+$nodeName = "AZLNODE01"
 $NIC1 = "MGMT1"
 $NIC2 = "MGMT2"
 $nic1IP = "172.19.19.10"

@@ -43,7 +43,7 @@ $dcSecuredPassword = ConvertTo-SecureString $dcPassword -AsPlainText -Force
 $dcCredentials = New-Object System.Management.Automation.PSCredential ($dcDomAdminUser , $dcSecuredPassword)
 
 # VM Names
-$nodeName = "NODE"
+$nodeName = "AZLNODE01"
 $dcName = "DC"
 
 # Sleep durations in seconds

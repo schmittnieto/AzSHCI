@@ -38,7 +38,7 @@ $isoPath_HCI = "C:\ISO\HCI23H2.iso"    # Replace with the actual path to your HC
 $isoPath_DC = "C:\ISO\WS2025.iso"      # Replace with the actual path to your Domain Controller ISO
 
 # HCI Node VM Configuration
-$HCIVMName = "NODE"
+$HCIVMName = "AZLNODE01"
 $HCI_Memory = 32GB
 $HCI_Processors = 8
 $HCI_Disks = @(
@@ -313,42 +313,20 @@ function Test-TPM {
 # Function to Test for Hyper-V Role
 function Test-HyperV {
     try {
-        # Query Win32_OptionalFeature for Hyper-V
-        $hyperVFeature = Get-CimInstance -ClassName Win32_OptionalFeature -Filter "Name='Microsoft-Hyper-V-All'" -ErrorAction Stop
-
-        if ($hyperVFeature.InstallState -eq 1) {
-            Write-Message "Hyper-V role is already installed on the host." -Type "Success"
+        $feature = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -ErrorAction Stop
+        if ($feature.State -eq "Enabled") {
+            Write-Message "Hyper-V role already installed." -Type Success
+            return
         }
-        else {
-            Write-Message "Hyper-V role is not installed on the host. Installing Hyper-V role and management tools..." -Type "Info"
 
-            # Determine OS type
-            $os = Get-CimInstance -ClassName Win32_OperatingSystem
-            $productType = $os.ProductType
-            # ProductType 1 = Workstation, 2 = Domain Controller, 3 = Server
+        Write-Message "Installing Hyper-V role and management tools..." -Type Info
+        Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All -NoRestart -ErrorAction Stop | Out-Null
 
-            if ($productType -eq 1) {
-                # Client OS - use Enable-WindowsOptionalFeature
-                Write-Message "Detected Client Operating System. Installing Hyper-V using Enable-WindowsOptionalFeature..." -Type "Info"
-                Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -All -NoRestart -ErrorAction Stop
-            }
-            else {
-                # Server OS - use DISM
-                Write-Message "Detected Server Operating System. Installing Hyper-V using DISM..." -Type "Info"
-                dism.exe /Online /Enable-Feature /All /FeatureName:Microsoft-Hyper-V /IncludeManagementTools /NoRestart | Out-Null
-            }
-
-            Write-Message "Hyper-V role and management tools installed successfully. A restart is required." -Type "Success"
-
-            # Optional: Implement a progress bar or sleep before restarting
-            Start-SleepWithProgress -Seconds 60 -Activity "Restarting Host" -Status "Please wait while the host restarts..."
-
-            # Restart the computer to apply changes
-            Restart-Computer -Force
-        }
+        Write-Message "Hyper-V installed. Please reboot and run the script again." -Type Warning
+        exit 0
     }
     catch {
-        Write-Message "Failed to check or install Hyper-V role. Error: $_" -Type "Error"
+        Write-Message "Failed to install Hyper-V. $($_)" -Type Error
         exit 1
     }
 }

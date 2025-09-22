@@ -22,7 +22,7 @@
 #region Variables
 
 # Define VM Names
-$HCIVMName = "NODE"
+$HCIVMName = "AZLNODE01"
 $DCVMName = "DC"
 
 # Define Virtual Switch and NAT Configuration
