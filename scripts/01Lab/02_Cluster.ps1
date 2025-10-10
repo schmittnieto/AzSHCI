@@ -226,7 +226,6 @@ try {
     Start-SleepWithProgress -Seconds $SleepModules -Activity "Waiting for PowerShell Modules" -Status "Preparing to register"
     Invoke-Command -VMName $nodeName -Credential $DefaultCredentials -ScriptBlock {
         param($Cloud, $Location, $SubscriptionID, $resourceGroupName)
-        <#
         # Optional: start image customization task if present
         $task = Get-ScheduledTask -TaskName ImageCustomizationScheduledTask -ErrorAction SilentlyContinue
         if ($task -and $task.State -eq 'Ready') {
@@ -235,7 +234,7 @@ try {
         } else {
             Write-Host "ImageCustomizationScheduledTask not started or not present." -ForegroundColor Yellow
         }
-        #>
+
         # Ensure modules are ready
         Start-Sleep -Seconds 20
 
