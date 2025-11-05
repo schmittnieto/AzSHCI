@@ -278,6 +278,10 @@ try {
         $VerbosePreference = 'SilentlyContinue'
         $ProgressPreference = 'SilentlyContinue'
 
+        # Intall Hyper-V and Failover Clustering management features
+        Install-WindowsFeature -Name RSAT-Clustering, RSAT-Clustering-Mgmt, RSAT-Clustering-PowerShell, RSAT-Clustering-CmdInterface -ErrorAction Stop | Out-Null
+        Install-WindowsFeature -Name Hyper-V-Tools, Hyper-V-PowerShell -ErrorAction Stop | Out-Null
+
         # Install Active Directory Domain Services
         Install-WindowsFeature -Name AD-Domain-Services -IncludeManagementTools -ErrorAction Stop | Out-Null
 
