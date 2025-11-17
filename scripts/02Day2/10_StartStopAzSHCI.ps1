@@ -178,6 +178,7 @@ function Start-HCIInfrastructure {
         Invoke-Command -VMName $nodeName -Credential $hciCredentials -ScriptBlock {
             Write-Host "Starting Cluster Service..." -ForegroundColor Yellow
             Start-Cluster
+            Sync-AzureStackHCI
         }
         Write-Message "Cluster service started on $nodeName." -Type "Success"
     } catch {
