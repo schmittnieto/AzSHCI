@@ -35,13 +35,13 @@ $DefaultCredentials = New-Object System.Management.Automation.PSCredential ($def
 
 # VM and Domain Variables
 $dcVMName  = "DC"
-$domainName = "azurestack.local"
-$netBIOSName = "AZURESTACK"
+$domainName = "azurelocal.local"
+$netBIOSName = "AZURELOCAL"
 
 $NIC1 = "MGMT1"
-$nic1IP = "172.19.19.2"
-$nic1GW = "172.19.19.1"
-$nic1DNS = "172.19.19.2"
+$nic1IP = "172.19.18.2"
+$nic1GW = "172.19.18.1"
+$nic1DNS = "172.19.18.2"
 
 # Variables for DNS forwarder and time zone
 $dnsForwarder = "8.8.8.8"
