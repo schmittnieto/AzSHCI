@@ -28,21 +28,21 @@
 #region Variables
 
 # Virtual Switch and Network Configuration
-$vSwitchName = "azurestackhci"
+$vSwitchName = "azurelocal"
 $vSwitchNIC = "vEthernet ($vSwitchName)"
-$vNetIPNetwork = "172.19.19.0/24"
+$vNetIPNetwork = "172.19.18.0/24"
 $vIPNetworkPrefixLength = ($vNetIPNetwork -split '/')[1]
-$natName = "azurestackhci"
+$natName = "azurelocal"
 $HCIRootFolder = "C:\HCI"
 
 # ISO Paths
-$isoPath_HCI = "C:\ISO\HCI23H2.iso"    # Replace with the actual path to your HCI Node ISO
-$isoPath_DC  = "C:\ISO\WS2025.iso"      # Replace with the actual path to your Domain Controller ISO
+$isoPath_HCI = "D:\ISO\AzureLocal24H2.iso"    # Replace with the actual path to your HCI Node ISO
+$isoPath_DC  = "D:\ISO\WS2025.iso"      # Replace with the actual path to your Domain Controller ISO
 
 # HCI Node VM Configuration
-$HCIVMName = "AZLNODE01"
-$HCI_Memory = 32GB
-$HCI_Processors = 8
+$HCIVMName = "AZLN01"
+$HCI_Memory = 48GB
+$HCI_Processors = 16
 $HCI_Disks = @(
     @{ Path = "${HCIVMName}_C.vhdx"; Size = 127GB },
     @{ Path = "s2d1.vhdx";            Size = 1024GB },

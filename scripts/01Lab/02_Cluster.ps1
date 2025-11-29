@@ -39,12 +39,12 @@ $setupUser = "Setupuser"
 $setupPwd = "dgemsc#utquMHDHp3M"
 
 # Node Configuration
-$nodeName = "AZLNODE01"
+$nodeName = "AZLN01"
 $NIC1 = "MGMT1"
 $NIC2 = "MGMT2"
-$nic1IP = "172.19.19.10"
-$nic1GW = "172.19.19.1"
-$nic1DNS = "172.19.19.2"
+$nic1IP = "172.19.18.10"
+$nic1GW = "172.19.18.1"
+$nic1DNS = "172.19.18.2"
 
 # Azure Configuration
 $Location = "westeurope"
