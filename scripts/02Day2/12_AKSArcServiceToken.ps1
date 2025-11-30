@@ -13,8 +13,26 @@
     - Allows passing a direct kubectl path with -KubectlPath. If not found and -InstallDependencies is set, tries winget.
     - Interactive selection for Subscription, Resource Group, and Cluster (using az --query ... -o tsv) or non interactive via parameters.
     - Supports re-authentication with -ForceAzReauth (runs 'az account clear' and 'az login', with device code if -UseDeviceCode).
-    - Downloads kubeconfig, creates service account and clusterrolebinding, then retrieves a token using TokenRequest API
-      with a safe fallback to a secret based token.
+    - Downloads kubeconfig, creates service account and clusterrolebinding, then retrieves a token using TokenRequest API with a safe fallback to a secret based token.
+
+.USAGE
+    # Interactive mode: select subscription, resource group, and cluster interactively
+    .\12_AKSArcServiceToken.ps1
+
+    # Fully automated mode with all parameters specified
+    .\12_AKSArcServiceToken.ps1 -SubscriptionName "MySubscription" -ResourceGroupName "MyResourceGroup" -ClusterName "my-aks-arc-cluster" -AdminUser "my-admin" -OutputFolder "C:\kube"
+
+    # With device code authentication
+    .\12_AKSArcServiceToken.ps1 -UseDeviceCode
+
+    # Force re-authentication and skip extension updates
+    .\12_AKSArcServiceToken.ps1 -ForceAzReauth -SkipAzExtensionUpdate
+
+    # Specify custom kubectl path and install dependencies if needed
+    .\12_AKSArcServiceToken.ps1 -KubectlPath "C:\tools\kubectl.exe" -InstallDependencies
+
+    # Overwrite existing kubeconfig file
+    .\12_AKSArcServiceToken.ps1 -SubscriptionName "MySubscription" -Overwrite
 
 .PARAMETER SubscriptionName
     Azure subscription name. If omitted, you will be prompted to select one.
