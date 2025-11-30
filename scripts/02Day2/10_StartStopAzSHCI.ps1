@@ -26,7 +26,7 @@
 #region Variables
 
 # Domain Variables
-$netBIOSName = "AZURESTACK"
+$netBIOSName = "AZURELOCAL"
 
 # Credentials for HCI Cluster Node
 $hcilcmuser = "hciadmin"
@@ -43,7 +43,7 @@ $dcSecuredPassword = ConvertTo-SecureString $dcPassword -AsPlainText -Force
 $dcCredentials = New-Object System.Management.Automation.PSCredential ($dcDomAdminUser , $dcSecuredPassword)
 
 # VM Names
-$nodeName = "AZLNODE01"
+$nodeName = "AZLN01"
 $dcName = "DC"
 
 # Sleep durations in seconds
