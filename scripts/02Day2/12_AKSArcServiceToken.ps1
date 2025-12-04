@@ -8,31 +8,21 @@
     Exports a token to a text file for programmatic access.
 
 .DESCRIPTION
-    - Validates required CLI dependencies. No Azure CLI installation is attempted by this script.
+    - Validates required CLI dependencies and, if missing, INTERACTIVELY offers to install them (Azure CLI and kubectl).
     - Optional: skip az extension updates with -SkipAzExtensionUpdate.
-    - Allows passing a direct kubectl path with -KubectlPath. If not found and -InstallDependencies is set, tries winget.
+    - Allows passing a direct kubectl path with -KubectlPath. If not found, you will be asked to point to it or install it.
     - Interactive selection for Subscription, Resource Group, and Cluster (using az --query ... -o tsv) or non interactive via parameters.
-    - Supports re-authentication with -ForceAzReauth (runs 'az account clear' and 'az login', with device code if -UseDeviceCode).
-    - Downloads kubeconfig, creates service account and clusterrolebinding, then retrieves a token using TokenRequest API with a safe fallback to a secret based token.
+    - Supports re-authentication with -ForceAzReauth (runs 'az account clear' and then forces login).
+    - Asks how you want to log in to Azure (interactive vs device code) whenever a login is required.
+    - Downloads kubeconfig, creates service account and clusterrolebinding, then retrieves a token using TokenRequest API
+      with a safe fallback to a secret based token.
 
 .USAGE
-    # Interactive mode: select subscription, resource group, and cluster interactively
+    # Interactive mode
     .\12_AKSArcServiceToken.ps1
 
-    # Fully automated mode with all parameters specified
-    .\12_AKSArcServiceToken.ps1 -SubscriptionName "MySubscription" -ResourceGroupName "MyResourceGroup" -ClusterName "my-aks-arc-cluster" -AdminUser "my-admin" -OutputFolder "C:\kube"
-
-    # With device code authentication
-    .\12_AKSArcServiceToken.ps1 -UseDeviceCode
-
-    # Force re-authentication and skip extension updates
-    .\12_AKSArcServiceToken.ps1 -ForceAzReauth -SkipAzExtensionUpdate
-
-    # Specify custom kubectl path and install dependencies if needed
-    .\12_AKSArcServiceToken.ps1 -KubectlPath "C:\tools\kubectl.exe" -InstallDependencies
-
-    # Overwrite existing kubeconfig file
-    .\12_AKSArcServiceToken.ps1 -SubscriptionName "MySubscription" -Overwrite
+    # Automated mode
+    .\12_AKSArcServiceToken.ps1 -SubscriptionName "MySubscription" -ResourceGroupName "MyRG" -ClusterName "my-aks-arc" -AdminUser "my-admin"
 
 .PARAMETER SubscriptionName
     Azure subscription name. If omitted, you will be prompted to select one.
@@ -55,9 +45,6 @@
 .PARAMETER KubeconfigPath
     Full path to write the kubeconfig. Defaults to "<OutputFolder>\aks-arc-kube-config".
 
-.PARAMETER InstallDependencies
-    If set, attempts to install kubectl using winget if not found.
-
 .PARAMETER SkipAzExtensionUpdate
     If set, does not update az extensions. Only checks presence and warns if missing.
 
@@ -65,10 +52,10 @@
     Full path to kubectl.exe if you want to force it. The script will add its folder to PATH for this session.
 
 .PARAMETER UseDeviceCode
-    If set, signs in with "az login --use-device-code".
+    If set, selects device code as the default login method when prompting.
 
 .PARAMETER ForceAzReauth
-    If set, runs 'az account clear' before login and performs an interactive login.
+    If set, runs 'az account clear' before login and forces a new login.
 
 .PARAMETER Overwrite
     If set, overwrites existing kubeconfig file.
@@ -87,7 +74,6 @@ param(
     [string]$Namespace = "default",
     [string]$OutputFolder = "$env:USERPROFILE\.kube\AzSHCI",
     [string]$KubeconfigPath,
-    [switch]$InstallDependencies,
     [switch]$SkipAzExtensionUpdate,
     [string]$KubectlPath,
     [switch]$UseDeviceCode,
@@ -136,42 +122,104 @@ function Start-SleepWithProgress {
 }
 
 function Test-Command {
-    param([Parameter(Mandatory=$true)][string]$Name)
+    param(
+        [Parameter(Mandatory = $true)][string]$Name
+    )
     return [bool](Get-Command -Name $Name -ErrorAction SilentlyContinue)
 }
 
+function Read-YesNo {
+    param(
+        [Parameter(Mandatory = $true)][string]$Prompt,
+        [bool]$DefaultYes = $true
+    )
+    $suffix = if ($DefaultYes) { "[Y/n]" } else { "[y/N]" }
+    while ($true) {
+        $ans = Read-Host "$Prompt $suffix"
+        if ([string]::IsNullOrWhiteSpace($ans)) {
+            return $DefaultYes
+        }
+        switch ($ans.ToLower()) {
+            "y"  { return $true }
+            "yes" { return $true }
+            "n"  { return $false }
+            "no" { return $false }
+            default { Write-Message "Please answer y or n." -Type "Warning" }
+        }
+    }
+}
+
+function Ensure-WingetAvailable {
+    $wg = Get-Command -Name "winget" -ErrorAction SilentlyContinue
+    if (-not $wg) {
+        return $false
+    }
+    return $true
+}
+
+function Install-WithWinget {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackageId,
+        [Parameter(Mandatory = $true)][string]$FriendlyName
+    )
+    if (-not (Ensure-WingetAvailable)) {
+        Write-Message "winget is not available. Please install $FriendlyName manually and rerun." -Type "Error"
+        return $false
+    }
+    Write-Message "Installing $FriendlyName via winget..." -Type "Info"
+    winget install -e --id $PackageId --accept-package-agreements --accept-source-agreements | Out-Null
+    return $true
+}
+
 function Initialize-AzDependencies {
+    # Azure CLI
     $azCmd = Get-Command -Name "az" -ErrorAction SilentlyContinue
     if (-not $azCmd) {
-        Write-Message "Azure CLI is not available in this session PATH. Open a 64 bit PowerShell or add az to PATH." -Type "Error"
-        throw "Az CLI not found in PATH"
+        if (Read-YesNo -Prompt "Azure CLI was not found in PATH. Do you want to install it now?" -DefaultYes:$true) {
+            if (Install-WithWinget -PackageId "Microsoft.AzureCLI" -FriendlyName "Azure CLI") {
+                # Re-detect in this session
+                $azCmd = Get-Command -Name "az" -ErrorAction SilentlyContinue
+                if (-not $azCmd) {
+                    Write-Message "Azure CLI installation finished but 'az' is still not visible in this session. Open a new PowerShell and rerun if this fails." -Type "Warning"
+                }
+            } else {
+                Write-Message "Azure CLI installation request could not be completed." -Type "Error"
+            }
+        } else {
+            Write-Message "Azure CLI is required to continue. Exiting by user choice." -Type "Error"
+            throw "Az CLI not found and user declined installation"
+        }
+    }
+    $azCmd = Get-Command -Name "az" -ErrorAction SilentlyContinue
+    if (-not $azCmd) {
+        throw "Az CLI still not available after attempted installation"
     }
     Write-Message "Using az at: $($azCmd.Source)" -Type "Info"
 
+    # Required extension(s)
     $requiredExtensions = @("aksarc")
-    if ($SkipAzExtensionUpdate) {
-        foreach ($ext in $requiredExtensions) {
-            az extension show --name $ext 2>$null | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                Write-Message "Missing az extension '$ext'. Install it manually or rerun without -SkipAzExtensionUpdate." -Type "Warning"
-            }
-        }
-        return
-    }
-
     foreach ($ext in $requiredExtensions) {
         az extension show --name $ext 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) {
-            Write-Message "Adding az extension: $ext" -Type "Info"
-            az extension add --name $ext --allow-preview true --only-show-errors | Out-Null
-        } else {
-            Write-Message "Updating az extension: $ext" -Type "Info"
-            az extension update --name $ext --allow-preview true --only-show-errors | Out-Null
+            if ($SkipAzExtensionUpdate) {
+                Write-Message "Missing az extension '$ext' and -SkipAzExtensionUpdate is set. Some features may fail." -Type "Warning"
+            } else {
+                if (Read-YesNo -Prompt "Azure extension '$ext' is missing. Install it now?" -DefaultYes:$true) {
+                    az extension add --name $ext --allow-preview true --only-show-errors | Out-Null
+                } else {
+                    Write-Message "Extension '$ext' not installed. Script may not work properly." -Type "Warning"
+                }
+            }
+        } elseif (-not $SkipAzExtensionUpdate) {
+            if (Read-YesNo -Prompt "Update az extension '$ext' to latest?" -DefaultYes:$true) {
+                az extension update --name $ext --allow-preview true --only-show-errors | Out-Null
+            }
         }
     }
 }
 
 function Initialize-KubectlDependency {
+    # Explicit path provided
     if ($KubectlPath) {
         if (Test-Path $KubectlPath) {
             $dir = Split-Path -Path $KubectlPath -Parent
@@ -181,17 +229,18 @@ function Initialize-KubectlDependency {
             Write-Message "Using kubectl at: $KubectlPath" -Type "Info"
             return
         } else {
-            Write-Message "Provided kubectl path does not exist: $KubectlPath" -Type "Error"
-            throw "kubectl path invalid"
+            Write-Message "Provided kubectl path does not exist: $KubectlPath" -Type "Warning"
         }
     }
 
+    # In PATH already?
     $kubectlCmd = Get-Command -Name "kubectl" -ErrorAction SilentlyContinue
     if ($kubectlCmd) {
         Write-Message "Using kubectl at: $($kubectlCmd.Source)" -Type "Info"
         return
     }
 
+    # Common locations
     $candidates = @(
         "$env:ProgramFiles\Kubernetes\kubectl.exe",
         "$env:ProgramFiles\Kubernetes\bin\kubectl.exe",
@@ -210,36 +259,46 @@ function Initialize-KubectlDependency {
         return
     }
 
-    if ($InstallDependencies) {
-        if (Get-Command -Name "winget" -ErrorAction SilentlyContinue) {
-            Write-Message "Installing kubectl via winget..." -Type "Info"
-            winget install -e --id Kubernetes.kubectl --accept-package-agreements --accept-source-agreements | Out-Null
+    # Interactive path prompt or install
+    if (Read-YesNo -Prompt "kubectl not found. Do you want to install it now (winget)?" -DefaultYes:$true) {
+        if (Install-WithWinget -PackageId "Kubernetes.kubectl" -FriendlyName "kubectl") {
             $kubectlCmd = Get-Command -Name "kubectl" -ErrorAction SilentlyContinue
             if ($kubectlCmd) {
                 Write-Message "kubectl installed. Path: $($kubectlCmd.Source)" -Type "Success"
                 return
+            } else {
+                Write-Message "kubectl installation finished but command is not visible yet. You may need a new session." -Type "Warning"
             }
+        } else {
+            Write-Message "kubectl installation failed or winget not available." -Type "Error"
         }
-        Write-Message "Automatic kubectl installation failed. Please install it and rerun." -Type "Error"
-        throw "kubectl install failed"
+    } else {
+        $tryPath = Read-Host "Enter full path to kubectl.exe or leave empty to cancel"
+        if (-not [string]::IsNullOrWhiteSpace($tryPath) -and (Test-Path $tryPath)) {
+            $dir = Split-Path -Path $tryPath -Parent
+            if ($env:PATH -notlike "*$dir*") {
+                $env:PATH = "$dir;$env:PATH"
+            }
+            Write-Message "Using kubectl at: $tryPath" -Type "Info"
+            return
+        }
     }
 
-    Write-Message "kubectl is not in PATH. Provide -KubectlPath or use -InstallDependencies." -Type "Error"
-    throw "kubectl missing"
+    throw "kubectl not available"
 }
 
 function Select-FromList {
     param(
-        [Parameter(Mandatory=$true)][string[]]$Items,
-        [Parameter(Mandatory=$true)][string]$Prompt
+        [Parameter(Mandatory = $true)][object[]]$Items,   # array of display strings OR objects with a Display property
+        [Parameter(Mandatory = $true)][string]$Prompt
     )
     if (-not $Items -or $Items.Count -eq 0) {
         throw "No items to select."
     }
 
-    # Print enumerated list (robust across terminals)
     for ($i = 0; $i -lt $Items.Count; $i++) {
-        Write-Host ("[{0}] {1}" -f $i, $Items[$i])
+        $text = if ($Items[$i] -is [string]) { $Items[$i] } else { $Items[$i].Display }
+        Write-Host ("[{0}] {1}" -f $i, $text)
     }
 
     do {
@@ -253,20 +312,91 @@ function Select-FromList {
     } while ($true)
 }
 
-function Get-Option-AzTsv {
+function Get-SubscriptionInteractive {
+    # name, id, tenantId for a nicer display
+    $raw = az account list --all --query "[].{name:name,id:id,tenantId:tenantId,state:state}" -o tsv
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($raw)) {
+        throw "Failed to list subscriptions."
+    }
+
+    $lines = $raw -split "`r?`n" | Where-Object { $_.Trim() -ne "" }
+    $objs = foreach ($l in $lines) {
+        $p = $l -split "`t"
+        # Expecting 4 columns: name, id, tenantId, state
+        [pscustomobject]@{
+            Name     = $p[0]
+            Id       = $p[1]
+            TenantId = $p[2]
+            State    = $p[3]
+            Display  = ("{0}  [{1}]  (tenant {2})  {3}" -f $p[0], $p[1].Substring(0,8), $p[2].Substring(0,8), $p[3])
+        }
+    }
+
+    if ($objs.Count -eq 1) {
+        Write-Message "Auto-selected subscription: $($objs[0].Name)" -Type "Info"
+        return $objs[0].Name
+    }
+
+    $chosen = Select-FromList -Items $objs -Prompt "Select subscription"
+    return $chosen.Name
+}
+
+function Get-ResourceGroupInteractive {
+    $raw = az group list --query "[].{name:name,location:location}" -o tsv
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($raw)) {
+        throw "Failed to list resource groups."
+    }
+
+    $lines = $raw -split "`r?`n" | Where-Object { $_.Trim() -ne "" }
+    $objs = foreach ($l in $lines) {
+        $p = $l -split "`t"
+        [pscustomobject]@{
+            Name     = $p[0]
+            Location = $p[1]
+            Display  = ("{0}  ({1})" -f $p[0], $p[1])
+        }
+    }
+
+    if ($objs.Count -eq 1) {
+        Write-Message "Auto-selected resource group: $($objs[0].Name)" -Type "Info"
+        return $objs[0].Name
+    }
+
+    $chosen = Select-FromList -Items $objs -Prompt "Select resource group"
+    return $chosen.Name
+}
+
+function Get-ClusterInteractive {
     param(
-        [Parameter(Mandatory=$true)][string]$AzCommand,
-        [Parameter(Mandatory=$true)][string]$Prompt
+        [Parameter(Mandatory = $true)][string]$ResourceGroupName
     )
-    $raw = Invoke-Expression $AzCommand
+
+    $raw = az resource list -g $ResourceGroupName --resource-type Microsoft.Kubernetes/connectedClusters --query "[].{name:name,location:location}" -o tsv
     if ($LASTEXITCODE -ne 0) {
-        throw "Command failed: $AzCommand"
+        throw "Failed to list AKS Arc clusters in RG '$ResourceGroupName'."
     }
-    $lines = ($raw -split "`r?`n" | ForEach-Object { $_.Trim() }) | Where-Object { $_ -ne "" } | Select-Object -Unique
+
+    $lines = $raw -split "`r?`n" | Where-Object { $_.Trim() -ne "" }
     if (-not $lines -or $lines.Count -eq 0) {
-        throw "No results for: $AzCommand"
+        throw "No AKS Arc connectedClusters found in RG '$ResourceGroupName'."
     }
-    return Select-FromList -Items $lines -Prompt $Prompt
+
+    $objs = foreach ($l in $lines) {
+        $p = $l -split "`t"
+        [pscustomobject]@{
+            Name     = $p[0]
+            Location = $p[1]
+            Display  = ("{0}  ({1})" -f $p[0], $p[1])
+        }
+    }
+
+    if ($objs.Count -eq 1) {
+        Write-Message "Auto-selected cluster: $($objs[0].Name)" -Type "Info"
+        return $objs[0].Name
+    }
+
+    $chosen = Select-FromList -Items $objs -Prompt "Select AKS Arc cluster"
+    return $chosen.Name
 }
 
 function Invoke-Kubectl {
@@ -301,53 +431,90 @@ $step = 0
 
 try {
     # Step 1
-    $step++; Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+    $step++
+    Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
     Initialize-AzDependencies
     Initialize-KubectlDependency
 
-    # Step 2 (login/reauth optional)
-    $step++; Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+    # Step 2 (login / reauth with interactive choice)
+    $step++
+    Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+
+    $needLogin = $false
     if ($ForceAzReauth) {
         Write-Message "Clearing Azure account context..." -Type "Info"
-        az account clear --only-show-errors | Out-Null
-        if ($UseDeviceCode) {
-            Write-Message "Signing in to Azure using device code..." -Type "Info"
-            az login --use-device-code --only-show-errors | Out-Null
-        } else {
-            Write-Message "Signing in to Azure..." -Type "Info"
-            az login --only-show-errors | Out-Null
-        }
+        az account clear --only-show-errors
+        $needLogin = $true
     } else {
-        # Ensure we at least have a token
-        $acct = az account show 2>$null | ConvertFrom-Json
+        $acct = $null
+        try {
+            $acct = az account show 2>$null | ConvertFrom-Json
+        } catch {
+            $acct = $null
+        }
         if (-not $acct) {
-            if ($UseDeviceCode) {
-                Write-Message "Signing in to Azure using device code..." -Type "Info"
-                az login --use-device-code --only-show-errors | Out-Null
-            } else {
-                Write-Message "Signing in to Azure..." -Type "Info"
-                az login --only-show-errors | Out-Null
-            }
+            $needLogin = $true
+            Write-Message "No active Azure CLI context detected. Login is required." -Type "Warning"
+        } else {
+            Write-Message "Using existing Azure CLI context for subscription '$($acct.name)'." -Type "Info"
         }
     }
 
-    # Step 3 (interactive selection using az --query ... -o tsv)
-    $step++; Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+    if ($needLogin) {
+        $defaultMethod = if ($UseDeviceCode) { "D" } else { "I" }
+        $defaultLabel = if ($defaultMethod -eq "D") { "Device code" } else { "Interactive" }
+
+        while ($true) {
+            $choice = Read-Host "Choose Azure login method: [I]nteractive or [D]evice code (default: $defaultLabel)"
+            if ([string]::IsNullOrWhiteSpace($choice)) {
+                $choice = $defaultMethod
+            }
+            $first = $choice.Substring(0,1).ToUpper()
+            if ($first -eq "I") {
+                Write-Message "Signing in to Azure (interactive)..." -Type "Info"
+                az login --only-show-errors
+                break
+            } elseif ($first -eq "D") {
+                Write-Message "Signing in to Azure using device code..." -Type "Info"
+                az login --use-device-code --only-show-errors
+                break
+            } else {
+                Write-Message "Invalid option. Please choose I or D." -Type "Warning"
+            }
+        }
+
+        $acct = $null
+        try {
+            $acct = az account show 2>$null | ConvertFrom-Json
+        } catch {
+            $acct = $null
+        }
+        if (-not $acct) {
+            Write-Message "Azure login failed. No active context." -Type "Error"
+            throw "Azure login failed"
+        } else {
+            Write-Message "Azure login successful. Using subscription '$($acct.name)'." -Type "Success"
+        }
+    }
+
+    # Step 3 (interactive selection with clear names)
+    $step++
+    Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
 
     if (-not $SubscriptionName) {
         Write-Message "Select the Subscription" -Type "Info"
-        $SubscriptionName = Get-Option-AzTsv -AzCommand 'az account list --all --query "[].name" -o tsv' -Prompt "Select subscription index"
+        $SubscriptionName = Get-SubscriptionInteractive
     }
     az account set --name $SubscriptionName --only-show-errors | Out-Null
 
     if (-not $ResourceGroupName) {
         Write-Message "Select the Resource Group" -Type "Info"
-        $ResourceGroupName = Get-Option-AzTsv -AzCommand 'az group list --query "[].name" -o tsv' -Prompt "Select resource group index"
+        $ResourceGroupName = Get-ResourceGroupInteractive
     }
 
     if (-not $ClusterName) {
         Write-Message "Select the AKS Arc Cluster" -Type "Info"
-        $ClusterName = Get-Option-AzTsv -AzCommand ("az resource list -g {0} --resource-type Microsoft.Kubernetes/connectedClusters --query ""[].name"" -o tsv" -f $ResourceGroupName) -Prompt "Select cluster index"
+        $ClusterName = Get-ClusterInteractive -ResourceGroupName $ResourceGroupName
     }
 
     if (-not $AdminUser) {
@@ -355,7 +522,9 @@ try {
     }
 
     # Step 4
-    $step++; Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+    $step++
+    Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+
     if (-not (Test-Path -Path $OutputFolder)) {
         New-Item -Path $OutputFolder -ItemType Directory -Force | Out-Null
         Write-Message "Created output folder: $OutputFolder" -Type "Success"
@@ -368,7 +537,9 @@ try {
     }
 
     # Step 5
-    $step++; Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+    $step++
+    Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+
     if ((-not (Test-Path $KubeconfigPath)) -or $Overwrite) {
         Write-Message "Fetching kubeconfig for $ClusterName in $ResourceGroupName..." -Type "Info"
         az aksarc get-credentials --name $ClusterName --resource-group $ResourceGroupName --file $KubeconfigPath --admin --only-show-errors | Out-Null
@@ -376,7 +547,9 @@ try {
     }
 
     # Step 6
-    $step++; Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+    $step++
+    Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+
     $nodes = Invoke-Kubectl -KubectlArgs "get nodes -o name" -Kubeconfig $KubeconfigPath
     if (-not $nodes) {
         Write-Message "Failed to reach cluster. Check connectivity and credentials." -Type "Error"
@@ -385,7 +558,9 @@ try {
     Write-Message "Cluster connectivity OK." -Type "Success"
 
     # Step 7
-    $step++; Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+    $step++
+    Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+
     $nsExists = Invoke-Kubectl -KubectlArgs "get ns $Namespace --ignore-not-found" -Kubeconfig $KubeconfigPath
     if (-not $nsExists) {
         Write-Message "Creating namespace '$Namespace'..." -Type "Info"
@@ -405,7 +580,9 @@ try {
     }
 
     # Step 8
-    $step++; Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+    $step++
+    Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+
     $crbName = "$AdminUser-binding"
     $crbExists = Invoke-Kubectl -KubectlArgs "get clusterrolebinding $crbName --ignore-not-found" -Kubeconfig $KubeconfigPath
     if (-not $crbExists) {
@@ -418,7 +595,9 @@ try {
     }
 
     # Step 9
-    $step++; Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+    $step++
+    Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+
     $Token = $null
     Write-Message "Trying TokenRequest API..." -Type "Info"
     try {
@@ -426,7 +605,9 @@ try {
         if ($Token -and ($Token.Trim().Length -gt 0)) {
             Write-Message "TokenRequest API succeeded." -Type "Success"
         }
-    } catch { }
+    } catch {
+        # ignore and fall back
+    }
 
     if (-not $Token) {
         Write-Message "Falling back to secret based token method..." -Type "Warning"
@@ -464,8 +645,10 @@ type: kubernetes.io/service-account-token
     }
 
     # Step 10
-    $step++; Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
-    $tokenFile = Join-Path $OutputFolder "$($AdminUser)-$($Namespace)-token.txt"
+    $step++
+    Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
+
+    $tokenFile = Join-Path $OutputFolder ("{0}-{1}-token.txt" -f $AdminUser, $Namespace)
     $Token | Out-File -FilePath $tokenFile -Encoding ascii -Force
     Write-Message "Token written to: $tokenFile" -Type "Success"
     Write-Message "Kubeconfig at:     $KubeconfigPath" -Type "Info"
