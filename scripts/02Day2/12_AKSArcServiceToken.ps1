@@ -16,6 +16,7 @@
     - Asks how you want to log in to Azure (interactive vs device code) whenever a login is required.
     - Downloads kubeconfig, creates service account and clusterrolebinding, then retrieves a token using TokenRequest API
       with a safe fallback to a secret based token.
+    - Kubernetes resource names derived from AdminUser are automatically converted to a RFC1123 compliant, lower case value.
 
 .USAGE
     # Interactive mode
@@ -35,6 +36,7 @@
 
 .PARAMETER AdminUser
     Service account name to create or reuse. If omitted, you will be prompted.
+    Note: Kubernetes resources (SA, Secret, ClusterRoleBinding) will use a lower case, RFC1123-safe variant.
 
 .PARAMETER Namespace
     Namespace for the service account. Defaults to "default".
@@ -399,6 +401,20 @@ function Get-ClusterInteractive {
     return $chosen.Name
 }
 
+function Get-K8sName {
+    param(
+        [Parameter(Mandatory = $true)][string]$Base
+    )
+    # RFC1123: lower case alphanumeric, '-' or '.', must start/end with alphanumeric
+    $name = $Base.ToLowerInvariant()
+    $name = $name -replace '[^a-z0-9\-\.]', '-'
+    $name = $name.Trim('-','.')
+    if ([string]::IsNullOrWhiteSpace($name)) {
+        throw "The provided name '$Base' cannot be converted to a valid Kubernetes resource name."
+    }
+    return $name
+}
+
 function Invoke-Kubectl {
     param(
         [string]$KubectlArgs,
@@ -521,6 +537,10 @@ try {
         $AdminUser = Read-Host -Prompt "Input the service account name"
     }
 
+    # Derive a Kubernetes safe name from AdminUser
+    $K8sAdminName = Get-K8sName -Base $AdminUser
+    Write-Message "Using Kubernetes-safe name '$K8sAdminName' for service account, secret and role binding." -Type "Info"
+
     # Step 4
     $step++
     Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
@@ -570,24 +590,24 @@ try {
         Write-Message "Namespace '$Namespace' already exists." -Type "Info"
     }
 
-    $saExists = Invoke-Kubectl -KubectlArgs "get sa $AdminUser -n $Namespace --ignore-not-found" -Kubeconfig $KubeconfigPath
+    $saExists = Invoke-Kubectl -KubectlArgs "get sa $K8sAdminName -n $Namespace --ignore-not-found" -Kubeconfig $KubeconfigPath
     if (-not $saExists) {
-        Write-Message "Creating service account '$AdminUser' in namespace '$Namespace'..." -Type "Info"
-        Invoke-Kubectl -KubectlArgs "create serviceaccount $AdminUser -n $Namespace" -Kubeconfig $KubeconfigPath | Out-Null
-        Write-Message "Service account '$AdminUser' created." -Type "Success"
+        Write-Message "Creating service account '$K8sAdminName' in namespace '$Namespace'..." -Type "Info"
+        Invoke-Kubectl -KubectlArgs "create serviceaccount $K8sAdminName -n $Namespace" -Kubeconfig $KubeconfigPath | Out-Null
+        Write-Message "Service account '$K8sAdminName' created." -Type "Success"
     } else {
-        Write-Message "Service account '$AdminUser' already exists." -Type "Info"
+        Write-Message "Service account '$K8sAdminName' already exists." -Type "Info"
     }
 
     # Step 8
     $step++
     Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
 
-    $crbName = "$AdminUser-binding"
+    $crbName = "$K8sAdminName-binding"
     $crbExists = Invoke-Kubectl -KubectlArgs "get clusterrolebinding $crbName --ignore-not-found" -Kubeconfig $KubeconfigPath
     if (-not $crbExists) {
         Write-Message "Creating clusterrolebinding '$crbName' with cluster-admin..." -Type "Info"
-        $saRef = ("{0}:{1}" -f $Namespace, $AdminUser)  # avoids PowerShell scope parsing on ':'
+        $saRef = ("{0}:{1}" -f $Namespace, $K8sAdminName)  # RFC1123 safe name
         Invoke-Kubectl -KubectlArgs ("create clusterrolebinding {0} --clusterrole cluster-admin --serviceaccount {1}" -f $crbName, $saRef) -Kubeconfig $KubeconfigPath | Out-Null
         Write-Message "Clusterrolebinding '$crbName' created." -Type "Success"
     } else {
@@ -601,7 +621,7 @@ try {
     $Token = $null
     Write-Message "Trying TokenRequest API..." -Type "Info"
     try {
-        $Token = Invoke-Kubectl -KubectlArgs "create token $AdminUser -n $Namespace" -Kubeconfig $KubeconfigPath
+        $Token = Invoke-Kubectl -KubectlArgs "create token $K8sAdminName -n $Namespace" -Kubeconfig $KubeconfigPath
         if ($Token -and ($Token.Trim().Length -gt 0)) {
             Write-Message "TokenRequest API succeeded." -Type "Success"
         }
@@ -611,7 +631,7 @@ try {
 
     if (-not $Token) {
         Write-Message "Falling back to secret based token method..." -Type "Warning"
-        $secretName = "$AdminUser-token-secret"
+        $secretName = "$K8sAdminName-token-secret"
         $yaml = @"
 apiVersion: v1
 kind: Secret
@@ -619,7 +639,7 @@ metadata:
   name: $secretName
   namespace: $Namespace
   annotations:
-    kubernetes.io/service-account.name: $AdminUser
+    kubernetes.io/service-account.name: $K8sAdminName
 type: kubernetes.io/service-account-token
 "@
         $tmp = New-TemporaryFile
@@ -648,6 +668,7 @@ type: kubernetes.io/service-account-token
     $step++
     Update-ProgressBarMain -CurrentStep $step -TotalSteps $total -StatusMessage $steps[$step-1]
 
+    # Keep original AdminUser in the filename for user friendliness
     $tokenFile = Join-Path $OutputFolder ("{0}-{1}-token.txt" -f $AdminUser, $Namespace)
     $Token | Out-File -FilePath $tokenFile -Encoding ascii -Force
     Write-Message "Token written to: $tokenFile" -Type "Success"
