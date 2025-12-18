@@ -31,7 +31,7 @@ $vSwitchNIC = "vEthernet ($vSwitchName)"
 $natName = "azurelocal"
 
 # Define Root Folder for VMs and Disks
-$HCIRootFolder = "C:\HCI"
+$HCIRootFolder = "E:\AzureLocalLab"
 $HCIDiskFolder = Join-Path -Path $HCIRootFolder -ChildPath "Disk"
 
 # Define Tasks for Progress Bar
