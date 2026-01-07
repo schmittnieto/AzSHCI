@@ -85,7 +85,7 @@ function Remove-VMResources {
     if ($null -ne $vm) {
         if ($vm.State -in @('Running', 'Paused', 'Suspended')) {
             try {
-                Stop-VM -Name $VMName -Force -ErrorAction Stop | Out-Null
+                Stop-VM -Name $VMName -TurnOff -ErrorAction Stop | Out-Null
                 Write-Message "VM '$VMName' stopped." -Type "Success"
             } catch {
                 Write-Message "Failed to stop VM '$VMName'. Error: $_" -Type "Error"
