@@ -42,18 +42,18 @@ $isoPath_DC  = "E:\ISO\WS2025.iso"      # Replace with the actual path to your D
 # HCI Node VM Configuration
 $HCIVMName = "AZLN01"
 $HCI_Memory = 96GB
-$HCI_Processors = 16
+$HCI_Processors = 32
 $HCI_Disks = @(
     @{ Path = "${HCIVMName}_C.vhdx"; Size = 127GB },
-    @{ Path = "s2d1.vhdx";            Size = 1024GB },
-    @{ Path = "s2d2.vhdx";            Size = 1024GB }
+    @{ Path = "s2d1.vhdx";            Size = 1024GB }<#,
+    @{ Path = "s2d2.vhdx";            Size = 1024GB }#>
 )
 $HCI_NetworkAdapters = @("MGMT1", "MGMT2")
 
 # Domain Controller VM Configuration
 $DCVMName = "DC"
 $DC_Memory = 4GB
-$DC_Processors = 2
+$DC_Processors = 4
 $DC_Disks = @(
     @{ Path = "${DCVMName}_C.vhdx"; Size = 60GB }
 )
