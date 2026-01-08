@@ -76,7 +76,7 @@ function Compress-Vhdx {
     End {
         $Duration = New-TimeSpan -Start $StartTime -End (Get-Date)
         $DurationPretty = $($Duration.Hours).ToString() + "h:" + $($Duration.Minutes).ToString() + "m:" + $($Duration.Seconds).ToString() + "s"
-        $Stats | FT -Wrap -AutoSize
+        $Stats | Format-Table -Wrap -AutoSize
 
         Write-Verbose "The operation completed in $DurationPretty"
         Write-Verbose "Disk space saved: $([math]::round($TotalSaved /1Gb, 2)) GB"
