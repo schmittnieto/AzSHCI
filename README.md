@@ -7,7 +7,7 @@
   <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://img.shields.io/github/v/release/schmittnieto/AzSHCI"></a><br>
 </p>
 
-Welcome to **AzSHCI** — a set of PowerShell scripts to deploy, configure, and manage **Azure Local** for testing, lab, or proof-of-concept scenarios.
+Welcome to **AzSHCI** a set of PowerShell scripts to deploy, configure and manage **Azure Local** for testing, lab or proof-of-concept scenarios.
 
 For a deeper walkthrough and best practices, see: https://schmitt-nieto.com/blog/azure-local-demolab/
 
