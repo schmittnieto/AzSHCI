@@ -7,9 +7,9 @@
   <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://img.shields.io/github/v/release/schmittnieto/AzSHCI"></a><br>
 </p>
 
-Welcome to **AzSHCI**, your comprehensive set of PowerShell scripts to deploy, configure and manage Azure Local for testing, lab, or proof-of-concept scenarios. This repository brings together multiple scripts, each with its own purpose and structure, allowing you to spin up a fully functioning Azure Local environment quickly.
+Welcome to **AzSHCI** — a set of PowerShell scripts to deploy, configure, and manage **Azure Local** for testing, lab, or proof-of-concept scenarios.
 
-For a deeper walk-through and best practices, check out the blog post: [schmitt-nieto.com/blog/azure-local-demolab/](https://schmitt-nieto.com/blog/azure-local-demolab/)
+For a deeper walkthrough and best practices, see: https://schmitt-nieto.com/blog/azure-local-demolab/
 
 ---
 
@@ -24,20 +24,39 @@ AzSHCI/
 │   │   ├── 02_Cluster.ps1
 │   │   ├── 03_TroubleshootingExtensions.ps1
 │   │   ├── 99_Offboarding.ps1
+│   │   └── Old version/              # Archived (reference only)
 │   ├── 02Day2/
 │   │   ├── 10_StartStopAzSHCI.ps1
 │   │   ├── 11_ImageBuilderAzSHCI.ps1
+│   │   ├── 11_ImageBuilderAL.ps1
+│   │   ├── 12_AKSArcServiceToken.ps1
+│   │   ├── 13_VHDXOptimization.ps1
+│   │   └── OldImageBuilder/           # Archived (reference only)
 │   └── 03VMDeployment/
-│       ├── 20_SSHRDPArcVM.ps1
+│       └── 20_SSHRDPArcVM.ps1
 ├── README.md
 └── LICENSE
 ```
 
-Each folder under `scripts/` is dedicated to a specific lifecycle phase of your Azure Local environment:
+Each folder under `scripts/` is dedicated to a lifecycle phase of your Azure Local environment:
 
-- **01Lab**: Infrastructure setup, cluster creation, domain configuration, and environment cleanup.
-- **02Day2**: Day-two operations (e.g., start/stop routines, image import/build).
-- **03VMDeployment**: Scripts related to deploying and managing VMs (including SSH connectivity and Azure Arc integration).
+- **01Lab**: Infrastructure setup, cluster creation, domain configuration, troubleshooting, and environment cleanup.
+- **02Day2**: Day-two operations (start/stop routines, image import/build, image optimization, AKS Arc helpers).
+- **03VMDeployment**: Scripts for VM access and Azure Arc interactions.
+
+---
+
+## Default Lab Assumptions (Important)
+
+These scripts are opinionated. Before running anything, review and adjust the variables inside the scripts to match your environment.
+
+Common defaults (as currently coded):
+
+- **Host paths**: lab files under `E:\AzureLocalLab` and ISOs under `E:\ISO\...` (see `scripts/01Lab/00_Infra_AzHCI.ps1`).
+- **Networking**: internal vSwitch + NAT named `azurelocal` with subnet `172.19.18.0/24` and gateway `.1`.
+- **VM names**: Node VM `AZLN01`, Domain Controller VM `DC`.
+
+If your machine does not have an `E:` drive (very common), you must change these values before running.
 
 ---
 
@@ -45,43 +64,52 @@ Each folder under `scripts/` is dedicated to a specific lifecycle phase of your 
 
 ### 01Lab
 
-1. **00_Infra_AzHCI.ps1**  
-   - Provisions virtual switches, NAT networking, and folder structures.  
-   - Creates the Azure Local Node VM and the Domain Controller VM.  
-   - Ensures TPM checks and Hyper-V prerequisites are met.
+1. **00_Infra_AzHCI.ps1**
+   - Provisions virtual switch + NAT, and creates folder structures.
+   - Creates the Azure Local Node VM and the Domain Controller VM.
+   - Configures VM security (vTPM/Key Protector) and data disks.
 
-2. **01_DC.ps1**  
-   - Configures the Domain Controller VM: network settings, time zone, Active Directory installation, and DNS setup.  
-   - Creates foundational OUs and prepares AD for Azure Local.  
+2. **01_DC.ps1**
+   - Configures the Domain Controller VM: network settings, time zone, AD DS installation, DNS forwarders.
+   - Creates foundational OUs and prepares AD for Azure Local.
 
-3. **02_Cluster.ps1**  
-   - Renames and reconfigures the Node VM.  
-   - Installs Windows features needed for clustering and Arc integration.  
-   - Registers the node with Azure Arc for management.
+3. **02_Cluster.ps1**
+   - Configures the Node VM (rename, networking, required roles/features).
+   - Registers the node with Azure Arc (uses `Invoke-AzStackHciArcInitialization`).
 
-4. **03_TroubleshootingExtensions.ps1**  
-   - Manages Azure Connected Machine (Arc) extensions for your Azure Local environment.  
-   - Removes failed extensions, reinstalls them, and ensures required extensions are present.
+4. **03_TroubleshootingExtensions.ps1**
+   - Helps manage Azure Connected Machine (Arc) extensions: remove failed extensions, reinstall required ones.
 
-5. **99_Offboarding.ps1**  
-   - Cleans up the entire lab environment by removing VMs, NAT settings, virtual switches, and associated folder structures.  
+5. **99_Offboarding.ps1**
+   - Removes VMs, vSwitch/NAT, and deletes the lab folder.
 
 ### 02Day2
 
-1. **10_StartStopAzSHCI.ps1**  
-   - A simple script to stop or start your entire Azure Local lab environment in an orderly sequence.  
-   - Ensures the Domain Controller is turned on or off before the Node, and gracefully shuts down cluster services.
+1. **10_StartStopAzSHCI.ps1**
+   - Starts/stops the whole lab in order (DC first on start; cluster service stop before node shutdown).
 
-2. **11_ImageBuilderAzSHCI.ps1**  
-   - Automates downloading official Azure VM images (Windows or Linux) and storing them in your Azure Local environment.  
-   - Uses AzCopy for high-speed transfers, converts the retrieved VHD into VHDX, and optimizes it for deployment.  
+2. **11_ImageBuilderAzSHCI.ps1**
+   - Downloads selected Azure marketplace images into Azure Local storage.
+   - Uses AzCopy and converts VHD → VHDX.
+   - Uses `Out-GridView` for interactive selection.
+
+3. **11_ImageBuilderAL.ps1**
+   - An alternative/optimized image builder workflow with similar goals.
+
+4. **12_AKSArcServiceToken.ps1**
+   - Fetches AKS Arc kubeconfig and creates a service account/token for programmatic access.
+   - Can (optionally) install dependencies interactively (Azure CLI, kubectl) using `winget`.
+
+5. **13_VHDXOptimization.ps1**
+   - Contains a `Compress-Vhdx` helper to compact VHDX files using `Optimize-VHD`.
+   - Includes an example invocation at the bottom of the script.
 
 ### 03VMDeployment
 
-1. **20_SSHRDPArcVM.ps1**  
-   - Searches for Azure Arc-connected VMs in a specified resource group.  
-   - Validates the presence of SSH extensions and, if necessary, installs them.  
-   - Initiates an SSH connection to your Arc-enabled VMs, enabling RDP tunneling or direct SSH.
+1. **20_SSHRDPArcVM.ps1**
+   - Finds Azure Arc connected machines in a resource group.
+   - Ensures the Azure CLI SSH extension is installed.
+   - Establishes SSH connectivity (can be used for SSH-based RDP tunneling).
 
 ---
 
@@ -89,103 +117,124 @@ Each folder under `scripts/` is dedicated to a specific lifecycle phase of your 
 
 ### Hardware
 
-- **TPM Chip**: Required for VM-based security features (vTPM, Key Protector).
-- **Hyper-V Capable Processor**: Essential for nested virtualization.
-- **Minimum 32 GB RAM** (64 GB or more recommended for advanced scenarios).
-- **Sufficient Disk Space** for VM data and ISO files.
+- **TPM**: required for VM-based security features (vTPM, Key Protector).
+- **Hyper-V capable CPU**: required for nested virtualization.
+- **Memory**: minimum 32 GB (64+ GB recommended; some defaults allocate more).
+- **Disk**: sufficient space for multiple VHDX files + ISO storage.
 
 ### Software
 
-- **Active Azure Subscription** to register the node(s) with Azure Arc and deploy HCI.  
-- **Windows Server 2025 Evaluation ISO** (or later), placed in `C:\ISO\WS2025.iso`.
-- **Azure Local OS ISO**, placed in `C:\ISO\HCI23H2.iso`.
-- **PowerShell** running with administrative privileges and Execution Policy set to `RemoteSigned` or `Bypass`.
+- **Windows with Hyper-V** (Windows 11 / Windows Server with Hyper-V role installed).
+- **PowerShell**: Windows PowerShell 5.1 is recommended.
+- **Azure subscription**: required for Azure Arc registration and image workflows.
+- **ISOs** (defaults in scripts; adjust paths as needed):
+  - Windows Server 2025 ISO (for DC)
+  - Azure Local ISO
+
+### Optional dependencies (script-specific)
+
+- `Out-GridView` (interactive pickers): required by image builder selection UI.
+- Azure PowerShell modules: `Az.Accounts`, `Az.Compute`, `Az.Resources`, `Az.CustomLocation`, `Az.ConnectedMachine`.
+- Azure CLI (`az`): required by `scripts/02Day2/12_AKSArcServiceToken.ps1` and `scripts/03VMDeployment/20_SSHRDPArcVM.ps1`.
+- `kubectl`: required by `scripts/02Day2/12_AKSArcServiceToken.ps1`.
+- `winget`: used to install dependencies interactively (where supported).
+- AzCopy: downloaded/used by image builder scripts.
 
 ---
 
-## Usage
+## Usage (Recommended: run from repo root)
 
-1. **Clone the Repository**  
+1. **Clone the repository**
    ```plaintext
    git clone https://github.com/schmittnieto/AzSHCI.git
+   cd AzSHCI
    ```
 
-2. **Navigate to the Scripts Directory**  
-   ```plaintext
-   cd AzSHCI/scripts/01Lab
-   ```
-
-3. **Set the Execution Policy** (If needed)  
+2. **Set the Execution Policy** (if needed)
    ```powershell
    Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
    ```
 
-4. **Edit Script Variables**  
-   - Update credentials: `$defaultUser`, `$defaultPwd` in each script if you use different local admin accounts.  
-   - Place your ISO images in `C:\ISO\` or modify the paths in the scripts accordingly.
+3. **Review and edit variables before running**
 
-5. **Run the Scripts in Order**  
+   At minimum, check these files:
+
+   - `scripts/01Lab/00_Infra_AzHCI.ps1` (paths, VM sizing, ISO locations, subnet)
+   - `scripts/01Lab/01_DC.ps1` and `scripts/01Lab/02_Cluster.ps1` (credentials, subscription IDs, RG)
+
+4. **Run lab deployment scripts (in order)**
    ```powershell
-   .\00_Infra_AzHCI.ps1      # Creates infrastructure, Node VM, DC VM
-   .\01_DC.ps1               # Configures Domain Controller
-   .\02_Cluster.ps1          # Sets up the cluster node & Arc registration
-   .\03_TroubleshootingExtensions.ps1  # Optional troubleshooting
-   # Use .\99_Offboarding.ps1 when you want to remove everything
+   .\scripts\01Lab\00_Infra_AzHCI.ps1
+   .\scripts\01Lab\01_DC.ps1
+   .\scripts\01Lab\02_Cluster.ps1
+   .\scripts\01Lab\03_TroubleshootingExtensions.ps1  # optional
    ```
 
-### Day-2 Operations
+5. **Day-2 operations**
 
-- **Start/Stop**:  
-  ```powershell
-  .\scripts\02Day2\10_StartStopAzSHCI.ps1
-  ```
-  Ensures an orderly start or shutdown of your environment.
+   - Start/stop the lab:
+     ```powershell
+     .\scripts\02Day2\10_StartStopAzSHCI.ps1
+     ```
 
-- **Image Building**:  
-  ```powershell
-  .\scripts\02Day2\11_ImageBuilderAzSHCI.ps1
-  ```
-  Pulls images from Azure, converts them, and stores them as VHDX for local deployment.
+   - Build/import images:
+     ```powershell
+     .\scripts\02Day2\11_ImageBuilderAzSHCI.ps1
+     # or
+     .\scripts\02Day2\11_ImageBuilderAL.ps1
+     ```
 
-### VM Deployment & Arc Integration
+   - AKS Arc kubeconfig + service token:
+     ```powershell
+     .\scripts\02Day2\12_AKSArcServiceToken.ps1
+     ```
 
-- **SSH or RDP to Arc VMs**:  
-  ```powershell
-  .\scripts\03VMDeployment\20_SSHRDPArcVM.ps1
-  ```
-  Ensures the SSH extension is present on your Arc VMs and then establishes a secure connection.
+   - VHDX compaction helper:
+     ```powershell
+     .\scripts\02Day2\13_VHDXOptimization.ps1
+     ```
+
+6. **VM access & Arc interactions**
+
+   - SSH/RDP over SSH to Arc VMs:
+     ```powershell
+     .\scripts\03VMDeployment\20_SSHRDPArcVM.ps1
+     ```
 
 ---
 
-## Advanced Features & Roadmap
+## Safety & Security Notes
 
-- **Azure Kubernetes Service (AKS) on Azure Local**: Planned integration scripts for a hybrid K8s setup.
-- **Azure Virtual Desktop (AVD)**: Future templates to deploy AVD in conjunction with Azure Local.  
-- **Azure Arc Enhancements**: Extended support for policy, monitoring, and DevOps pipelines.
+- **Credentials**: several scripts include example/hardcoded usernames and passwords. Change them before running and never commit real secrets.
+- **Host changes**: the lab setup creates a Hyper-V vSwitch + NAT and configures a fixed IP range (`172.19.18.0/24`). Ensure it does not conflict with your environment.
+- **Offboarding is destructive**: `scripts/01Lab/99_Offboarding.ps1` removes VMs, NAT, vSwitch, and deletes the configured lab folder (default `E:\AzureLocalLab`). Review the script before executing.
 
-Stay tuned for additional automation scripts and integration points!
+---
+
+## Roadmap
+
+- Additional automation around Azure Local + Arc scenarios.
+- More end-to-end templates (e.g., AVD-style patterns) as the repo evolves.
 
 ---
 
 ## Contributing
 
-We welcome all contributors—your insights, bug fixes, and feature requests are invaluable. Feel free to:
-- Fork the repository and make pull requests.
-- Open [issues](https://github.com/schmittnieto/AzSHCI/issues) for suggestions or bugs.
-- Contact us directly if you have specialized requirements or questions.
+Contributions are welcome:
+
+- Fork the repository and open pull requests.
+- Use GitHub Issues for bugs/ideas: https://github.com/schmittnieto/AzSHCI/issues
 
 ---
 
 ## License
 
-This project is under the [MIT License](LICENSE). Refer to the license file for usage details.
+This project is licensed under the [MIT License](LICENSE).
 
 ---
 
 ## Contact & Further Information
 
-- **Author**: Cristian Schmitt Nieto  
-- **Blog**: [schmitt-nieto.com/blog/azure-stack-hci-demolab/](https://schmitt-nieto.com/blog/azure-stack-hci-demolab/)  
-- **Issues**: [GitHub Issues](https://github.com/schmittnieto/AzSHCI/issues)
-
-Thank you for using **AzSHCI**! We hope these scripts accelerate your Azure Local journey.
+- **Author**: Cristian Schmitt Nieto
+- **Blog**: https://schmitt-nieto.com/blog/azure-local-demolab/
+- **Issues**: https://github.com/schmittnieto/AzSHCI/issues
