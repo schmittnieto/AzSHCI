@@ -58,7 +58,7 @@ $SleepUpdates = 240   # Sleep Timer for after Update Installation
 # $SleepADServices = 30 # Increased Sleep Timer after DC promotion before configuring AD
 
 # Total number of steps for progress calculation
-$totalSteps = 12
+$totalSteps = 13
 $currentStep = 0
 
 #endregion
@@ -356,7 +356,49 @@ try {
     exit 1
 }
 
-# Step 9: Install Windows Updates
+# Step 9: Enable Remote Desktop (RDP) on the Domain Controller
+$currentStep++
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Enabling Remote Desktop on DC..."
+Write-Message "Enabling Remote Desktop (RDP) on VM '$dcVMName'..." -Type "Info"
+try {
+    Invoke-Command -VMName $dcVMName -Credential $DomainAdminCredentials -ScriptBlock {
+        $ErrorActionPreference = 'Stop'
+        $WarningPreference = 'SilentlyContinue'
+        $VerbosePreference = 'SilentlyContinue'
+        $ProgressPreference = 'SilentlyContinue'
+
+        # Allow RDP connections in the registry
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -ErrorAction Stop
+
+        # Ensure Network Level Authentication (NLA) is enabled (recommended)
+        Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1 -ErrorAction SilentlyContinue
+
+        # Make sure TermService is set to Automatic and started
+        Set-Service -Name TermService -StartupType Automatic -ErrorAction Stop
+        Start-Service -Name TermService -ErrorAction Stop
+
+        # Enable built-in Remote Desktop firewall rules
+        try {
+            # Use display group to cover the common RDP rules
+            Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction Stop
+        } catch {
+            # Fallback to common rule names if the display group isn't available
+            $ruleNames = @("RemoteDesktop-UserMode-In-TCP","RemoteDesktop-UserMode-In-UDP","RemoteDesktop-UserMode-Public-In-TCP")
+            foreach ($r in $ruleNames) {
+                if (Get-NetFirewallRule -Name $r -ErrorAction SilentlyContinue) {
+                    Enable-NetFirewallRule -Name $r -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    } -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
+
+    Write-Message "RDP enabled and firewall rules updated on VM '$dcVMName'." -Type "Success"
+} catch {
+    Write-Message "Failed to enable RDP on VM '$dcVMName'. Error: $_" -Type "Error"
+    exit 1
+}
+
+# Step 10: Install Windows Updates
 $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Installing Windows Updates..."
 Write-Message "Installing Windows Updates on VM '$dcVMName'..." -Type "Info"
@@ -386,7 +428,7 @@ try {
     exit 1
 }
 
-# Step 10: Create Organizational Units (OUs)
+# Step 11: Create Organizational Units (OUs)
 $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Creating Organizational Units..."
 Write-Message "Creating Organizational Units (OUs) in Active Directory on VM '$dcVMName'..." -Type "Info"
@@ -489,7 +531,7 @@ try {
     exit 1
 }
 
-# Step 11: Install Azure Local AD Artifacts
+# Step 12: Install Azure Local AD Artifacts
 $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Installing Azure Local AD Artifacts..."
 Write-Message "Installing Azure Local AD Artifacts Pre-Creation Tool and creating AD objects..." -Type "Info"
@@ -545,7 +587,7 @@ try {
     exit 1
 }
 
-# Step 12: Final Completion
+# Step 13: Final Completion
 $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Finalizing..."
 Write-Message "Domain Controller configuration completed successfully." -Type "Success"
