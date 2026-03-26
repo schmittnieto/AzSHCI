@@ -26,9 +26,10 @@ $HCIVMName = "AZLN01"
 $DCVMName = "DC"
 
 # Define Virtual Switch and NAT Configuration
-$vSwitchName = "azurelocal"
-$vSwitchNIC = "vEthernet ($vSwitchName)"
-$natName = "azurelocal"
+$vSwitchName    = "azurelocal"
+$vSwitchNIC     = "vEthernet ($vSwitchName)"
+$natName        = "azurelocal"
+$vNetIPNetwork  = "172.19.18.0/24"
 
 # Define Root Folder for VMs and Disks
 $HCIRootFolder = "E:\AzureLocalLab"
@@ -41,11 +42,13 @@ $tasks = @(
     "Removing NAT Configuration",
     "Removing IP Addresses from Virtual Switch Interface",
     "Removing Virtual Switch",
+    "Removing Firewall Rules",
     "Removing Folder Structures"
 )
 
-$totalTasks = $tasks.Count
-$currentTask = 0
+$totalTasks      = $tasks.Count
+$currentTask     = 0
+$skipNetworking  = $false
 
 #endregion
 
@@ -147,43 +150,97 @@ foreach ($task in $tasks) {
             Remove-VMResources -VMName $DCVMName -DiskFolder $HCIDiskFolder
         }
         "Removing NAT Configuration" {
-            Write-Message "Removing NAT configuration '$natName'..." -Type "Info"
-            try {
-                Remove-NetNat -Name $natName -Confirm:$false -ErrorAction Stop | Out-Null
-                Write-Message "NAT '$natName' removed." -Type "Success"
-            } catch [System.Management.Automation.ItemNotFoundException] {
-                Write-Message "NAT '$natName' does not exist. Skipping removal." -Type "Warning"
-            } catch {
-                Write-Message "Failed to remove NAT '$natName'. Error: $_" -Type "Error"
+            # Check if the switch is still attached to any VM before touching networking
+            $attachedVMs = @(
+                Get-VM -ErrorAction SilentlyContinue | Where-Object {
+                    (Get-VMNetworkAdapter -VMName $_.Name -ErrorAction SilentlyContinue).SwitchName -contains $vSwitchName
+                }
+            )
+            if ($attachedVMs.Count -gt 0) {
+                $vmNames = ($attachedVMs | Select-Object -ExpandProperty Name) -join ', '
+                Write-Message "Virtual switch '$vSwitchName' is still in use by: $vmNames." -Type "Warning"
+                Write-Message "NAT, IP addresses and virtual switch will not be removed. Stop or remove those VMs first." -Type "Warning"
+                $skipNetworking = $true
+            } else {
+                $skipNetworking = $false
+                Write-Message "Checking NAT configuration '$natName'..." -Type "Info"
+                $nat = Get-NetNat -Name $natName -ErrorAction SilentlyContinue
+                if ($null -eq $nat) {
+                    Write-Message "NAT '$natName' does not exist. Skipping removal." -Type "Warning"
+                } else {
+                    try {
+                        Remove-NetNat -Name $natName -Confirm:$false -ErrorAction Stop | Out-Null
+                        Write-Message "NAT '$natName' removed." -Type "Success"
+                    } catch {
+                        Write-Message "Failed to remove NAT '$natName'. Error: $_" -Type "Error"
+                    }
+                }
             }
         }
         "Removing IP Addresses from Virtual Switch Interface" {
-            Write-Message "Removing IP addresses from interface '$vSwitchNIC'..." -Type "Info"
-            try {
-                $ipAddresses = Get-NetIPAddress -InterfaceAlias $vSwitchNIC -ErrorAction Stop
-                foreach ($ip in $ipAddresses) {
-                    try {
-                        Remove-NetIPAddress -InterfaceAlias $vSwitchNIC -IPAddress $ip.IPAddress -Confirm:$false -ErrorAction Stop | Out-Null
-                        Write-Message "IP address '$($ip.IPAddress)' removed from interface '$vSwitchNIC'." -Type "Success"
-                    } catch {
-                        Write-Message "Failed to remove IP address '$($ip.IPAddress)' from interface '$vSwitchNIC'. Error: $_" -Type "Error"
+            if ($skipNetworking) {
+                Write-Message "Skipping IP address removal (switch still in use)." -Type "Warning"
+            } else {
+                Write-Message "Removing IP addresses from interface '$vSwitchNIC'..." -Type "Info"
+                try {
+                    $ipAddresses = Get-NetIPAddress -InterfaceAlias $vSwitchNIC -ErrorAction Stop
+                    foreach ($ip in $ipAddresses) {
+                        try {
+                            Remove-NetIPAddress -InterfaceAlias $vSwitchNIC -IPAddress $ip.IPAddress -Confirm:$false -ErrorAction Stop | Out-Null
+                            Write-Message "IP address '$($ip.IPAddress)' removed from interface '$vSwitchNIC'." -Type "Success"
+                        } catch {
+                            Write-Message "Failed to remove IP address '$($ip.IPAddress)' from interface '$vSwitchNIC'. Error: $_" -Type "Error"
+                        }
                     }
+                } catch [System.Management.Automation.ItemNotFoundException] {
+                    Write-Message "No IP addresses found on interface '$vSwitchNIC'. Skipping removal." -Type "Warning"
+                } catch {
+                    Write-Message "Failed to retrieve IP addresses from interface '$vSwitchNIC'. Error: $_" -Type "Error"
                 }
-            } catch [System.Management.Automation.ItemNotFoundException] {
-                Write-Message "No IP addresses found on interface '$vSwitchNIC'. Skipping removal." -Type "Warning"
-            } catch {
-                Write-Message "Failed to retrieve IP addresses from interface '$vSwitchNIC'. Error: $_" -Type "Error"
             }
         }
         "Removing Virtual Switch" {
-            Write-Message "Removing virtual switch '$vSwitchName'..." -Type "Info"
+            if ($skipNetworking) {
+                Write-Message "Skipping virtual switch removal (switch still in use)." -Type "Warning"
+            } else {
+                Write-Message "Checking virtual switch '$vSwitchName'..." -Type "Info"
+                $switch = Get-VMSwitch -Name $vSwitchName -ErrorAction SilentlyContinue
+                if ($null -eq $switch) {
+                    Write-Message "Virtual switch '$vSwitchName' does not exist. Skipping removal." -Type "Warning"
+                } else {
+                    try {
+                        Remove-VMSwitch -Name $vSwitchName -Force -ErrorAction Stop | Out-Null
+                        Write-Message "Virtual switch '$vSwitchName' removed." -Type "Success"
+                    } catch {
+                        Write-Message "Failed to remove virtual switch '$vSwitchName'. Error: $_" -Type "Error"
+                    }
+                }
+            }
+        }
+        "Removing Firewall Rules" {
+            Write-Message "Removing ICMP firewall rules created by the lab setup..." -Type "Info"
             try {
-                Remove-VMSwitch -Name $vSwitchName -Force -ErrorAction Stop | Out-Null
-                Write-Message "Virtual switch '$vSwitchName' removed." -Type "Success"
-            } catch [System.Management.Automation.ItemNotFoundException] {
-                Write-Message "Virtual switch '$vSwitchName' does not exist. Skipping removal." -Type "Warning"
+                $ip, $cidr = $vNetIPNetwork -split '/'
+                $bytes = ([System.Net.IPAddress]::Parse($ip)).GetAddressBytes()
+                $bytes[3] += 1
+                $gatewayIP = [System.Net.IPAddress]::new($bytes).ToString()
+
+                # Current rule name (without interface alias)
+                $ruleName    = "Allow-ICMPv4-$gatewayIP"
+                # Legacy rule name (with interface alias, created before the fix)
+                $legacyRuleName = "Allow-ICMPv4-$vSwitchNIC-$gatewayIP"
+
+                foreach ($name in @($ruleName, $legacyRuleName)) {
+                    $rule = Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue
+                    if ($null -ne $rule) {
+                        Remove-NetFirewallRule -DisplayName $name -ErrorAction Stop | Out-Null
+                        Write-Message "Firewall rule '$name' removed." -Type "Success"
+                    } else {
+                        Write-Message "Firewall rule '$name' does not exist. Skipping." -Type "Warning"
+                    }
+                }
             } catch {
-                Write-Message "Failed to remove virtual switch '$vSwitchName'. Error: $_" -Type "Error"
+                Write-Message "Failed to remove firewall rules. Error: $_" -Type "Error"
             }
         }
         "Removing Folder Structures" {

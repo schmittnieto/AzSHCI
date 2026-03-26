@@ -360,7 +360,7 @@ function Enable-GatewayIcmp {
             Write-Message "Network profile for '$InterfaceAlias' set to Private." -Type "Info"
         }
 
-        $ruleName = "Allow-ICMPv4-$InterfaceAlias-$Gateway"
+        $ruleName = "Allow-ICMPv4-$Gateway"
         $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
         if (-not $existing) {
             New-NetFirewallRule `
@@ -369,12 +369,11 @@ function Enable-GatewayIcmp {
                 -Action       Allow `
                 -Protocol     ICMPv4 `
                 -IcmpType     8 `
-                -InterfaceAlias $InterfaceAlias `
                 -LocalAddress $Gateway `
                 -RemoteAddress $SubnetCidr `
                 -Profile Any | Out-Null
 
-            Write-Message "Firewall rule created to allow ICMPv4 Echo to $Gateway on '$InterfaceAlias' from $SubnetCidr." -Type "Success"
+            Write-Message "Firewall rule created to allow ICMPv4 Echo to $Gateway from $SubnetCidr." -Type "Success"
         } else {
             Write-Message "Firewall rule '$ruleName' already exists." -Type "Info"
         }

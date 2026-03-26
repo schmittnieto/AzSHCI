@@ -22,10 +22,11 @@ AzSHCI/
 │       └── copy-to-blog.yml           # Syncs repo to blog on push to main
 ├── scripts/
 │   ├── 01Lab/
+│   │   ├── 00_AzurePreRequisites.ps1  # Azure subscription prep + SPN/RBAC setup
 │   │   ├── 00_Infra_AzHCI.ps1         # Host networking + VM provisioning
 │   │   ├── 01_DC.ps1                  # Domain Controller configuration
 │   │   ├── 02_Cluster.ps1             # Cluster node setup + Arc registration
-│   │   ├── 03_TroubleshootingExtensions.ps1  # Arc extension repair (deprecated)
+│   │   ├── 03_TroubleshootingExtensions.ps1  # Arc extension pre-staging (required for Terraform deployment)
 │   │   ├── 99_Offboarding.ps1         # Full lab teardown
 │   │   └── Old version/              # Archived (reference only)
 │   │       └── 02_Cluster.ps1
@@ -45,6 +46,13 @@ AzSHCI/
 │   │       └── 11_ImageBuilderAzSHCI_v7.ps1
 │   └── 03VMDeployment/
 │       └── 20_SSHRDPArcVM.ps1         # SSH/RDP to Arc-managed VMs
+├── terraform/
+│   ├── providers.tf                   # Terraform and provider version constraints
+│   ├── main.tf                        # AVM module call
+│   ├── variables.tf                   # Input variable definitions
+│   ├── outputs.tf                     # Key resource ID outputs
+│   └── terraform.tfvars.example       # Example variable values for this lab
+├── .gitignore
 ├── lastdeployment.json
 ├── README.md
 └── LICENSE
@@ -55,6 +63,8 @@ Each folder under `scripts/` covers a distinct lifecycle phase:
 - **01Lab**: Initial infrastructure build, networking, VM creation, domain promotion, Arc registration and full teardown.
 - **02Day2**: Ongoing operations, lab start/stop, image management, AKS Arc access, disk optimization.
 - **03VMDeployment**: Remote access to workload VMs running on top of the Azure Local cluster.
+
+The `terraform/` folder provides an Infrastructure-as-Code alternative to the manual portal deployment step. It uses the [Azure Verified Module for Azure Local](https://github.com/Azure/terraform-azurerm-avm-res-azurestackhci-cluster) to deploy the cluster after the node has been registered with Arc by `02_Cluster.ps1`.
 
 ---
 
@@ -141,7 +151,14 @@ Key variables to adjust: `$defaultPwd`, `$setupUser`, `$setupPwd`, `$timeZone`, 
 
 > **Before running this script**: start the `AZLN01` VM, complete the Azure Local manual installation and reach the desktop. The initial local administrator username and password must match the values set in the `$defaultUser` and `$defaultPwd` variables at the top of the script. Adjust those variables if you used different credentials during OS setup.
 
-Runs against the `AZLN01` VM over Hyper-V PowerShell Direct. Steps:
+The script prompts for an execution mode at startup:
+
+| Mode | When to use |
+|---|---|
+| **1 — Full setup** | First run: ISO removal, user creation, NIC configuration and Arc registration. |
+| **2 — Arc only** | Retry the Arc registration step after a failed full setup without repeating node configuration. |
+
+Runs against the `AZLN01` VM over Hyper-V PowerShell Direct. Full setup steps:
 
 1. Removes the mounted ISO.
 2. Creates a local administrator account (`Setupuser`), renames the VM to `AZLN01` and restarts.
@@ -150,25 +167,36 @@ Runs against the `AZLN01` VM over Hyper-V PowerShell Direct. Steps:
    - `MGMT2`: DHCP disabled, RDMA enabled.
    - Time zone set to UTC; time synced from the DC.
 4. Optionally triggers the `ImageCustomizationScheduledTask` if present (Azure Local OEM image).
-5. Calls `Invoke-AzStackHciArcInitialization` directly on the node with your subscription, resource group, tenant, cloud and region, no ARM access token or account ID required (updated 2025-09-15).
+5. Calls `Invoke-AzStackHciArcInitialization` on the node. If `$SPNAppId` and `$SPNSecret` are set, the script authenticates via SPN, obtains an ARM access token with `Get-AzAccessToken`, and passes it to `Invoke-AzStackHciArcInitialization` using `-AccountId` and `-ArmAccessToken` (the cmdlet does not use the current Az session). Otherwise the node falls back to an interactive device code login. A retry loop handles the transient `BootstrapOobeService` connection error (up to `$ArcRetryCount` attempts, `$SleepBootstrap` seconds apart).
 
 **You must update these variables before running:**
 
 ```powershell
 $SubscriptionID    = "000000-00000-000000-00000-0000000"
-$resourceGroupName = "YourResourceGroupName"
+$resourceGroupName = "rg-azlocal-lab"
 $TenantID          = "000000-00000-000000-00000-0000000"
 $Location          = "westeurope"   # Azure region
 $Cloud             = "AzureCloud"
 ```
 
+**Optional — SPN authentication** (recommended; avoids an interactive device code prompt on the node):
+
+```powershell
+$SPNAppId  = "application-client-id-from-00_AzurePreRequisites"
+$SPNSecret = "client-secret-from-00_AzurePreRequisites"
+```
+
+Leave both empty to fall back to device code login.
+
 ---
 
-#### 4. `03_TroubleshootingExtensions.ps1`, Arc extension repair *(deprecated)*
+#### 4. `03_TroubleshootingExtensions.ps1`, Arc extension pre-staging
 
-> **This script is no longer needed for current deployments.** The provisioning flow has changed: Arc extensions are now automatically deployed during cluster creation in Azure and do not require manual intervention. The script is kept in the repository for reference only.
+> **Required before Terraform deployment.** When deploying via the Azure portal wizard, the three mandatory Arc extensions are installed automatically during the cluster creation flow. Terraform does not handle this step — the extensions must be present on the node **before** `terraform apply` is run or the `validatedeploymentsetting` step will fail with `ValidationFailed: Could not find any edge device... Please verify that the Device Management Extension is successfully installed`.
 
-It was an interactive tool that connected to Azure, retrieved Arc-connected machines with `CloudMetadataProvider = "AzSHCI"`, removed locks on failed extensions, reinstalled them and added any missing ones from the required set (TelemetryAndDiagnostics, DeviceManagement, LifecycleManager and RemoteSupport).
+> When deploying through the portal wizard only, this script is not needed.
+
+It is an interactive tool that connects to Azure, retrieves Arc-connected machines with `CloudMetadataProvider = "AzSHCI"`, removes locks on failed extensions, reinstalls them and adds any missing ones from the required set (`TelemetryAndDiagnostics`, `DeviceManagementExtension`, `LcmController` and `EdgeRemoteSupport`).
 
 ---
 
@@ -303,6 +331,163 @@ Key variable to adjust: `$LocalUser` (the local user account on the target VM; d
 
 ---
 
+## Terraform Deployment
+
+> **Work in progress — not yet validated end-to-end.**
+> The Terraform path is still being tested and consolidated. No blog article will be published until a fully stable version is confirmed. Use the Azure portal wizard as the primary deployment method until further notice.
+
+The `terraform/` folder contains an Infrastructure-as-Code deployment for the Azure Local cluster using the [Azure Verified Module (AVM)](https://github.com/Azure/terraform-azurerm-avm-res-azurestackhci-cluster). It is a direct alternative to clicking through the Azure portal after Arc registration completes.
+
+### Pre-requisites before running Terraform
+
+The Azure portal wizard installs the mandatory Arc extensions automatically during the deployment wizard flow. When deploying via Terraform those extensions must be present on the node **before** `terraform apply` is run. The three required extensions are:
+
+- `TelemetryAndDiagnostics`
+- `DeviceManagementExtension`
+- `LcmController`
+
+Run `scripts/01Lab/03_TroubleshootingExtensions.ps1` against the Arc-registered node to install them. Terraform will fail at the `validatedeploymentsetting` step with a `ValidationFailed` error if any of these extensions are missing.
+
+### What it creates
+
+Terraform creates the following resources directly (before the AVM module runs):
+
+- **Key Vault** — stores deployment secrets and certificates. Created with `purge_protection_enabled = false` so it can be destroyed and recreated with the same name without a 90-day wait.
+- **Cloud witness storage account** — used by the cluster as a cloud witness for quorum.
+
+The AVM module then creates and wires together:
+
+- Azure Local cluster resource (`Microsoft.AzureStackHCI/clusters`)
+- Arc settings and Arc extensions
+- Custom location and resource bridge
+
+### Prerequisites for Terraform
+
+| Requirement | Notes |
+|---|---|
+| Terraform | >= 1.9, < 2.0 |
+| Azure provider | `hashicorp/azurerm ~> 4.0` |
+| Azure API provider | `azure/azapi ~> 2.4` |
+| Azure AD provider | `hashicorp/azuread ~> 2.50` |
+| Node Arc-registered | `02_Cluster.ps1` must have completed successfully |
+| SPN with required RBAC | Created by `00_AzurePreRequisites.ps1` |
+
+### Files
+
+| File | Purpose |
+|---|---|
+| `providers.tf` | Terraform version constraint and provider configuration |
+| `main.tf` | Key Vault, storage account and AVM module call with annotated parameters |
+| `variables.tf` | All input variable definitions with descriptions and defaults |
+| `outputs.tf` | Exports cluster ID, Key Vault ID and URI, custom location ID and witness storage account ID |
+| `terraform.tfvars.example` | Ready-to-use example pre-filled with the lab defaults |
+
+### Configuration
+
+Copy `terraform.tfvars.example` to `terraform.tfvars` and set every value marked `TODO`:
+
+```hcl
+subscription_id                = "your-subscription-id"
+service_principal_id           = "appid-from-00_AzurePreRequisites-output"
+service_principal_secret       = "secret-from-00_AzurePreRequisites-output"
+rp_service_principal_object_id = "object-id-of-azurestackhci-rp-spn"
+```
+
+To retrieve the resource provider SPN object ID (run once per subscription):
+
+```powershell
+(Get-AzADServicePrincipal -ApplicationId "1412d89f-b8a8-4111-b4fd-e82905cbd85d").Id
+```
+
+All other values default to the lab configuration (subnet `172.19.18.0/24`, node `AZLN01` at `172.19.18.10`, domain `azurelocal.local`, OU `OU=HCI,OU=Servers,OU=_LAB,...`). Adjust them only if you changed the corresponding variables in the PowerShell scripts.
+
+### Authentication
+
+Terraform requires an active Azure session before running `plan` or `apply`. Three options are available.
+
+**Option A — Azure CLI interactive (recommended for first-time use)**
+
+```powershell
+az login --tenant <your-tenant-id>
+az account set --subscription <your-subscription-id>
+```
+
+Terraform picks up the CLI session automatically. No extra provider configuration is needed.
+
+**Option B — Azure CLI with Service Principal (non-interactive)**
+
+Use the SPN created by `scripts/01Lab/00_AzurePreRequisites.ps1`:
+
+```powershell
+az login --service-principal `
+  --username <appid-from-00_AzurePreRequisites-output> `
+  --password <secret-from-00_AzurePreRequisites-output> `
+  --tenant   <your-tenant-id>
+az account set --subscription <your-subscription-id>
+```
+
+Terraform uses the resulting CLI session — no changes to `providers.tf` are needed.
+
+**Option C — Environment variables (CI/CD or fully scripted runs)**
+
+```powershell
+$env:ARM_CLIENT_ID       = "appid-from-00_AzurePreRequisites-output"
+$env:ARM_CLIENT_SECRET   = "secret-from-00_AzurePreRequisites-output"
+$env:ARM_TENANT_ID       = "your-tenant-id"
+$env:ARM_SUBSCRIPTION_ID = "your-subscription-id"
+```
+
+Terraform reads the `ARM_*` environment variables automatically — no changes to `providers.tf` are needed.
+
+---
+
+### Two-stage deployment
+
+The Azure Local deployment runs in two stages controlled by the `is_exported` variable.
+
+**Stage 1 — Validate** (`is_exported = false`, the default)
+
+```powershell
+cd terraform
+
+terraform init
+terraform plan   # review what will be created before committing
+terraform apply
+```
+
+Terraform creates the Key Vault and storage account, then submits the deployment configuration for validation. The node is checked for readiness and any configuration errors are surfaced (~10 minutes). Review the result in the Azure portal before proceeding.
+
+**Stage 2 — Deploy** (`is_exported = true`)
+
+After a successful validation, change `is_exported` in `terraform.tfvars`:
+
+```hcl
+is_exported = true
+```
+
+Then plan and apply again:
+
+```powershell
+terraform plan   # confirm only the deployment mode changes
+terraform apply
+```
+
+This triggers the full cluster provisioning (~30-60 minutes). Monitor progress in the Azure portal under the resource group.
+
+### RDMA
+
+`rdma_enabled` is set to `false` for this single-node lab. There is no cross-node storage traffic (switchless storage) and the NICs (`MGMT1`, `MGMT2`) are virtual adapters in a nested Hyper-V VM that do not support hardware RDMA. Setting this to `false` disables RDMA in all three network intents (management, compute and storage).
+
+### Security notes
+
+- `terraform.tfvars` is listed in `.gitignore`. Never commit the populated file.
+- BitLocker is disabled by default (`bitlocker_boot_volume = false`, `bitlocker_data_volumes = false`) because the lab uses thin-provisioned VHDX disks in a nested VM without a hardware TPM chain.
+- The default lab credentials (`dgemsc#utquMHDHp3M`) in the example file are intentional lab defaults. Replace them before running.
+- On `terraform destroy`, the provider purges the Key Vault immediately (`purge_soft_delete_on_destroy = true`) so the same name can be reused on the next deployment.
+- `resource_provider_registrations = "none"` is set in `providers.tf`. Terraform's azurerm provider would otherwise attempt to auto-register dozens of unrelated providers (ContainerInstance, Databricks, EventGrid...) at subscription scope, requiring `*/register/action` permission. All providers needed for Azure Local are already registered by `00_AzurePreRequisites.ps1`, so this is both safe and avoids over-privileging the SPN.
+
+---
+
 ## Prerequisites
 
 ### Hardware
@@ -329,7 +514,7 @@ Key variable to adjust: `$LocalUser` (the local user account on the target VM; d
 | Dependency | Required by |
 |---|---|
 | `Az.Accounts`, `Az.Compute`, `Az.Resources`, `Az.CustomLocation` | Image builder scripts |
-| `Az.Compute`, `Az.StackHCI` | `03_TroubleshootingExtensions.ps1` |
+| `Az.Compute`, `Az.StackHCI`, `Az.ConnectedMachine` | `03_TroubleshootingExtensions.ps1` |
 | `Az.Compute`, `Az.ConnectedMachine` | `20_SSHRDPArcVM.ps1` |
 | Azure CLI (`az`) + `aksarc` extension | `12_AKSArcServiceToken.ps1` |
 | Azure CLI (`az`) + `ssh` extension | `20_SSHRDPArcVM.ps1` |
@@ -378,11 +563,34 @@ At minimum, open and adjust:
 #   Start the AZLN01 VM manually first, wait for Windows Setup to finish, then run:
 .\scripts\01Lab\02_Cluster.ps1
 
-# Deprecated, extensions are now provisioned automatically during cluster creation in Azure
+# Required ONLY if deploying with Terraform (not needed for portal wizard deployments)
+# Run this BEFORE terraform apply to pre-stage the mandatory Arc extensions on AZLN01
 # .\scripts\01Lab\03_TroubleshootingExtensions.ps1
 ```
 
-> After `02_Cluster.ps1` completes the Arc registration, proceed with the Azure Local deployment from the Azure portal (cloud deployment).
+> After `02_Cluster.ps1` completes the Arc registration, deploy the cluster from the Azure portal or use the Terraform configuration described in the next step.
+
+### 4b. Deploy the cluster with Terraform (optional alternative to the portal)
+
+```powershell
+cd terraform
+
+# Copy the example file and fill in every TODO value
+Copy-Item terraform.tfvars.example terraform.tfvars
+notepad terraform.tfvars
+
+# Initialise providers and module
+terraform init
+
+# Stage 1: validate (is_exported = false, the default)
+terraform apply
+# Review the validation result in the Azure portal, then set is_exported = true
+
+# Stage 2: deploy (is_exported = true)
+terraform apply
+```
+
+See the [Terraform Deployment](#terraform-deployment) section below for full details.
 
 ### 5. Day-2 operations
 

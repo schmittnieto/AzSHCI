@@ -1,0 +1,164 @@
+# terraform.tfvars.example
+#
+# Copy this file to terraform.tfvars and fill in every value marked with
+# TODO before running terraform plan or terraform apply.
+#
+# IMPORTANT: terraform.tfvars contains sensitive values (passwords, secrets).
+# It is listed in .gitignore — never commit the populated file to source control.
+#
+# ---------------------------------------------------------------------------
+# TWO-STAGE DEPLOYMENT FLOW
+#
+# Stage 1 — Validate (is_exported = false)
+#   terraform init
+#   terraform apply
+#   Creates the Key Vault and witness storage account, then validates the
+#   Azure Local deployment configuration against the Arc-registered node.
+#   Review the result in the Azure portal (~10 minutes).
+#
+# Stage 2 — Deploy  (is_exported = true)
+#   Change is_exported to true below, then:
+#   terraform apply
+#   Triggers the full cluster provisioning (~30-60 minutes).
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Azure subscription and resource group
+# ---------------------------------------------------------------------------
+
+# TODO: replace with your Azure subscription ID
+subscription_id = "00000000-0000-0000-0000-000000000000"
+
+# Resource group created (or selected) by scripts/01Lab/00_AzurePreRequisites.ps1
+resource_group_name = "rg-azlocal-lab"
+
+# ---------------------------------------------------------------------------
+# Cluster identity
+# ---------------------------------------------------------------------------
+
+cluster_name         = "azlocal-cluster"
+site_id              = "site1"
+custom_location_name = "azlocal-customlocation"
+
+# ---------------------------------------------------------------------------
+# Active Directory
+# ---------------------------------------------------------------------------
+
+# Domain promoted by scripts/01Lab/01_DC.ps1
+domain_fqdn = "azurelocal.local"
+
+# OU pre-created by New-HciAdObjectsPreCreation in 01_DC.ps1
+adou_path = "OU=HCI,OU=Servers,OU=_LAB,DC=azurelocal,DC=local"
+
+# ---------------------------------------------------------------------------
+# Credentials
+#
+# WARNING: these are intentional lab defaults. Change them before running
+# and never commit real credentials to source control.
+# ---------------------------------------------------------------------------
+
+# LCM deployment user created inside the domain by 01_DC.ps1
+deployment_user          = "hciadmin"
+deployment_user_password = "dgemsc#utquMHDHp3M"
+
+# Local administrator account on the Azure Local node.
+# Setupuser is created by 02_Cluster.ps1 (not the built-in Administrator).
+local_admin_user     = "Setupuser"
+local_admin_password = "dgemsc#utquMHDHp3M"
+
+# ---------------------------------------------------------------------------
+# Network
+#
+# Values must match the static IP configuration applied to the node by
+# scripts/01Lab/02_Cluster.ps1.
+# The starting/ending range provides infrastructure IPs for management
+# VIPs and load balancer addresses. Keep it outside the node IP (.10).
+# ---------------------------------------------------------------------------
+
+default_gateway  = "172.19.18.1"
+dns_servers      = ["172.19.18.2"]
+starting_address = "172.19.18.20"
+ending_address   = "172.19.18.30"
+subnet_mask      = "255.255.255.0"
+
+# ---------------------------------------------------------------------------
+# Servers
+#
+# One entry per Arc-registered node. Single-node lab: only AZLN01.
+# ---------------------------------------------------------------------------
+
+servers = [
+  {
+    name        = "AZLN01"
+    ipv4Address = "172.19.18.10"
+  }
+]
+
+# ---------------------------------------------------------------------------
+# Service principals
+# ---------------------------------------------------------------------------
+
+# TODO: replace with the AppId and secret from 00_AzurePreRequisites.ps1 output
+service_principal_id     = "00000000-0000-0000-0000-000000000000"
+service_principal_secret = "your-spn-client-secret"
+
+# Object ID of the built-in Microsoft.AzureStackHCI resource provider SPN.
+# Retrieve it with (requires Az PowerShell):
+#   (Get-AzADServicePrincipal -ApplicationId "1412d89f-b8a8-4111-b4fd-e82905cbd85d").Id
+# TODO: replace with the value from the command above
+rp_service_principal_object_id = "00000000-0000-0000-0000-000000000000"
+
+# ---------------------------------------------------------------------------
+# Key Vault and cloud witness storage account
+#
+# Both resources are created by Terraform before the AVM module runs.
+# The names must be globally unique. The Key Vault uses purge_protection_enabled
+# = false so it can be deleted and recreated with the same name after
+# terraform destroy (the provider purges the soft-deleted vault automatically).
+# ---------------------------------------------------------------------------
+
+keyvault_name                = "kv-azlocal-lab"
+witness_storage_account_name = "saazlocallab"
+
+# ---------------------------------------------------------------------------
+# Network adapters
+#
+# management_adapters must match the NIC names configured inside the Azure
+# Local OS by scripts/01Lab/02_Cluster.ps1 (MGMT1 and MGMT2 in the default lab).
+#
+# rdma_enabled = false is correct for this single-node lab:
+#   - No cross-node storage traffic exists (switchless storage).
+#   - MGMT1 and MGMT2 are virtual adapters in a nested Hyper-V VM and do
+#     not support hardware RDMA.
+# ---------------------------------------------------------------------------
+
+management_adapters             = ["MGMT1", "MGMT2"]
+rdma_enabled                    = false
+storage_connectivity_switchless = true
+
+# storage_networks must mirror management_adapters for a single-node converged lab.
+# The AVM module sets converged = true only when storage_adapters equals
+# management_adapters, which produces a single combined network intent.
+# An empty list causes a second intent with zero adapters that fails schema validation.
+storage_networks = [
+  { name = "MGMT1", networkAdapterName = "MGMT1", vlanId = "711" },
+  { name = "MGMT2", networkAdapterName = "MGMT2", vlanId = "712" }
+]
+
+# ---------------------------------------------------------------------------
+# Deployment mode — see two-stage flow at the top of this file
+#
+# false = Validate (Stage 1, default)
+# true  = Deploy   (Stage 2, change after successful validation)
+# ---------------------------------------------------------------------------
+
+is_exported = false
+
+# ---------------------------------------------------------------------------
+# Deployment options
+# ---------------------------------------------------------------------------
+
+configuration_mode     = "Express"
+bitlocker_boot_volume  = false
+bitlocker_data_volumes = false
+enable_telemetry       = true

@@ -112,8 +112,22 @@ function Install-AzStackHCIModule {
         Write-Message "Az.StackHCI module is already installed." -Type "Info"
     }
 }
+function Install-AzConnectedMachineModule {
+    if (-not (Get-Module -ListAvailable -Name Az.ConnectedMachine)) {
+        Write-Message "Az.ConnectedMachine module not found. Installing..." -Type "Info"
+        try {
+            Install-Module -Name Az.ConnectedMachine -Repository PSGallery -Force -AllowClobber -ErrorAction Stop
+            Write-Message "Az.ConnectedMachine module installed successfully." -Type "Success"
+        } catch {
+            Write-Message "Failed to install Az.ConnectedMachine module. Error: $_" -Type "Error"
+            exit 1
+        }
+    } else {
+        Write-Message "Az.ConnectedMachine module is already installed." -Type "Info"
+    }
+}
 
-# Function to Allow Selection from a List
+# Function to Allow Selection from a List 
 function Get-Option {
     param (
         [string]$cmd,
@@ -219,7 +233,7 @@ try {
     exit 1
 }
 
-# Step 2: Install Az.StackHCI Module
+# Step 2: Install Az.StackHCI Module & Az.ConnectedMachine Module
 $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Ensuring Az.StackHCI module is installed..."
 Write-Message "Checking for Az.StackHCI module..." -Type "Info"
@@ -229,6 +243,16 @@ try {
     Write-Message "An error occurred while ensuring Az.StackHCI module is installed. Error: $_" -Type "Error"
     exit 1
 }
+
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Ensuring Az.ConnectedMachine module is installed..."
+Write-Message "Checking for Az.ConnectedMachine module..." -Type "Info"
+try {
+    Install-AzConnectedMachineModule
+} catch {
+    Write-Message "An error occurred while ensuring Az.ConnectedMachine module is installed. Error: $_" -Type "Error"
+    exit 1
+}
+
 
 # Step 3: Connect to Azure using Device Code Authentication
 $currentStep++
@@ -291,7 +315,7 @@ Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMess
 Write-Message "Selecting an ARC VM..." -Type "Info"
 try {
     # Prepare the list for selection
-    $arcVmNames = $ARCVMs | Select-Object -ExpandProperty Name
+    # $arcVmNames = $ARCVMs | Select-Object -ExpandProperty Name
 
     # Construct the command string for Get-Option
     # Create a temporary array to hold objects with Name property
