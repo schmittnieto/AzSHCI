@@ -160,9 +160,24 @@ module "azure_local_cluster" {
   configuration_mode = var.configuration_mode
 
   # Security — BitLocker disabled for lab deployments on thin-provisioned
-  # VHDX disks inside a nested VM.
-  bitlocker_boot_volume  = var.bitlocker_boot_volume
-  bitlocker_data_volumes = var.bitlocker_data_volumes
+  # VHDX disks inside a nested VM. credentialGuardEnforced matches the
+  # portal's Customized security settings.
+  bitlocker_boot_volume     = var.bitlocker_boot_volume
+  bitlocker_data_volumes    = var.bitlocker_data_volumes
+  credential_guard_enforced = var.credential_guard_enforced
+
+  # Observability — euLocation must be true for EU-region deployments.
+  eu_location = var.eu_location
+
+  # Quorum witness. The portal ARM template for single-node uses witness_type = ""
+  # (no witness). The module always passes cloudAccountName to the API even when
+  # witness_type is empty — this is a known AVM module limitation.
+  witness_type = var.witness_type
+
+  # Network intent — name and traffic types match the portal's single-node
+  # managementComputeOnly pattern (Compute_Management intent, no Storage traffic).
+  intent_name  = var.intent_name
+  traffic_type = var.traffic_type
 
   # resource names are managed explicitly; no random suffix needed.
   random_suffix = false

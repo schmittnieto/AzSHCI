@@ -271,3 +271,38 @@ variable "enable_telemetry" {
   description = "Allow the AVM module to send telemetry to Microsoft."
   default     = true
 }
+
+variable "eu_location" {
+  type        = bool
+  description = "Set to true when the deployment is in an EU region for data-residency compliance. Matches the portal's euLocation setting."
+  default     = false
+}
+
+variable "credential_guard_enforced" {
+  type        = bool
+  description = "When true, Windows Defender Credential Guard is enabled on the cluster. The portal enables this by default under Customized security settings."
+  default     = false
+}
+
+variable "witness_type" {
+  type        = string
+  description = <<-EOT
+    Quorum witness type. Use \"Cloud\" for cloud witness (requires witness_storage_account_name)
+    or \"\" for no witness (single-node lab without quorum). The portal ARM template uses no
+    witness for single-node deployments. Note: the AVM module always passes cloudAccountName
+    to the API even when witness_type is empty — this is a module limitation.
+  EOT
+  default     = "Cloud"
+}
+
+variable "intent_name" {
+  type        = string
+  description = "Name of the converged network intent. The portal uses Compute_Management for single-node deployments."
+  default     = "ManagementComputeStorage"
+}
+
+variable "traffic_type" {
+  type        = list(string)
+  description = "Traffic types assigned to the converged network intent. The portal uses [Compute, Management] (no Storage) for single-node managementComputeOnly deployments."
+  default     = ["Management", "Compute", "Storage"]
+}

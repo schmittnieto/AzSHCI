@@ -155,8 +155,8 @@ The script prompts for an execution mode at startup:
 
 | Mode | When to use |
 |---|---|
-| **1 — Full setup** | First run: ISO removal, user creation, NIC configuration and Arc registration. |
-| **2 — Arc only** | Retry the Arc registration step after a failed full setup without repeating node configuration. |
+| **1: Full setup** | First run: ISO removal, user creation, NIC configuration and Arc registration. |
+| **2: Arc only** | Retry the Arc registration step after a failed full setup without repeating node configuration. |
 
 Runs against the `AZLN01` VM over Hyper-V PowerShell Direct. Full setup steps:
 
@@ -179,7 +179,7 @@ $Location          = "westeurope"   # Azure region
 $Cloud             = "AzureCloud"
 ```
 
-**Optional — SPN authentication** (recommended; avoids an interactive device code prompt on the node):
+**Optional: SPN authentication** (recommended; avoids an interactive device code prompt on the node):
 
 ```powershell
 $SPNAppId  = "application-client-id-from-00_AzurePreRequisites"
@@ -192,7 +192,7 @@ Leave both empty to fall back to device code login.
 
 #### 4. `03_TroubleshootingExtensions.ps1`, Arc extension pre-staging
 
-> **Required before Terraform deployment.** When deploying via the Azure portal wizard, the three mandatory Arc extensions are installed automatically during the cluster creation flow. Terraform does not handle this step — the extensions must be present on the node **before** `terraform apply` is run or the `validatedeploymentsetting` step will fail with `ValidationFailed: Could not find any edge device... Please verify that the Device Management Extension is successfully installed`.
+> **Required before Terraform deployment.** When deploying via the Azure portal wizard, the three mandatory Arc extensions are installed automatically during the cluster creation flow. Terraform does not handle this step. The extensions must be present on the node **before** `terraform apply` is run or the `validatedeploymentsetting` step will fail with `ValidationFailed: Could not find any edge device... Please verify that the Device Management Extension is successfully installed`.
 
 > When deploying through the portal wizard only, this script is not needed.
 
@@ -333,7 +333,7 @@ Key variable to adjust: `$LocalUser` (the local user account on the target VM; d
 
 ## Terraform Deployment
 
-> **Work in progress — not yet validated end-to-end.**
+> **Work in progress - not yet validated end-to-end.**
 > The Terraform path is still being tested and consolidated. No blog article will be published until a fully stable version is confirmed. Use the Azure portal wizard as the primary deployment method until further notice.
 
 The `terraform/` folder contains an Infrastructure-as-Code deployment for the Azure Local cluster using the [Azure Verified Module (AVM)](https://github.com/Azure/terraform-azurerm-avm-res-azurestackhci-cluster). It is a direct alternative to clicking through the Azure portal after Arc registration completes.
@@ -352,8 +352,8 @@ Run `scripts/01Lab/03_TroubleshootingExtensions.ps1` against the Arc-registered 
 
 Terraform creates the following resources directly (before the AVM module runs):
 
-- **Key Vault** — stores deployment secrets and certificates. Created with `purge_protection_enabled = false` so it can be destroyed and recreated with the same name without a 90-day wait.
-- **Cloud witness storage account** — used by the cluster as a cloud witness for quorum.
+- **Key Vault**: stores deployment secrets and certificates. Created with `purge_protection_enabled = false` so it can be destroyed and recreated with the same name without a 90-day wait.
+- **Cloud witness storage account**: used by the cluster as a cloud witness for quorum.
 
 The AVM module then creates and wires together:
 
@@ -405,7 +405,7 @@ All other values default to the lab configuration (subnet `172.19.18.0/24`, node
 
 Terraform requires an active Azure session before running `plan` or `apply`. Three options are available.
 
-**Option A — Azure CLI interactive (recommended for first-time use)**
+**Option A: Azure CLI interactive (recommended for first-time use)**
 
 ```powershell
 az login --tenant <your-tenant-id>
@@ -414,7 +414,7 @@ az account set --subscription <your-subscription-id>
 
 Terraform picks up the CLI session automatically. No extra provider configuration is needed.
 
-**Option B — Azure CLI with Service Principal (non-interactive)**
+**Option B: Azure CLI with Service Principal (non-interactive)**
 
 Use the SPN created by `scripts/01Lab/00_AzurePreRequisites.ps1`:
 
@@ -426,9 +426,9 @@ az login --service-principal `
 az account set --subscription <your-subscription-id>
 ```
 
-Terraform uses the resulting CLI session — no changes to `providers.tf` are needed.
+Terraform uses the resulting CLI session. No changes to `providers.tf` are needed.
 
-**Option C — Environment variables (CI/CD or fully scripted runs)**
+**Option C: Environment variables (CI/CD or fully scripted runs)**
 
 ```powershell
 $env:ARM_CLIENT_ID       = "appid-from-00_AzurePreRequisites-output"
@@ -437,7 +437,7 @@ $env:ARM_TENANT_ID       = "your-tenant-id"
 $env:ARM_SUBSCRIPTION_ID = "your-subscription-id"
 ```
 
-Terraform reads the `ARM_*` environment variables automatically — no changes to `providers.tf` are needed.
+Terraform reads the `ARM_*` environment variables automatically. No changes to `providers.tf` are needed.
 
 ---
 
@@ -445,7 +445,7 @@ Terraform reads the `ARM_*` environment variables automatically — no changes t
 
 The Azure Local deployment runs in two stages controlled by the `is_exported` variable.
 
-**Stage 1 — Validate** (`is_exported = false`, the default)
+**Stage 1: Validate** (`is_exported = false`, the default)
 
 ```powershell
 cd terraform
@@ -457,7 +457,7 @@ terraform apply
 
 Terraform creates the Key Vault and storage account, then submits the deployment configuration for validation. The node is checked for readiness and any configuration errors are surfaced (~10 minutes). Review the result in the Azure portal before proceeding.
 
-**Stage 2 — Deploy** (`is_exported = true`)
+**Stage 2: Deploy** (`is_exported = true`)
 
 After a successful validation, change `is_exported` in `terraform.tfvars`:
 

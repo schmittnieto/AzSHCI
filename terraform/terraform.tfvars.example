@@ -36,8 +36,10 @@ resource_group_name = "rg-azlocal-lab"
 # Cluster identity
 # ---------------------------------------------------------------------------
 
-cluster_name         = "azlocal-cluster"
-site_id              = "site1"
+# cluster_name becomes both the Azure resource name and the internal cluster name.
+# site_id is used as namingPrefix (matches ARM's namingPrefix, e.g. "HCI01").
+cluster_name         = "azure-local"
+site_id              = "HCI01"
 custom_location_name = "azlocal-customlocation"
 
 # ---------------------------------------------------------------------------
@@ -132,18 +134,25 @@ witness_storage_account_name = "saazlocallab"
 #     not support hardware RDMA.
 # ---------------------------------------------------------------------------
 
-management_adapters             = ["MGMT1", "MGMT2"]
+# The portal ARM template uses a single adapter (MGMT1) with a Compute_Management
+# intent and no storage network (managementComputeOnly / singleServerDeployment pattern).
+# The AVM module requires at least one entry in storage_networks to produce a converged
+# intent (converged = true when storage_adapters == management_adapters). With an empty
+# list the module generates two separate intents where the storage intent has zero
+# adapters, which fails Azure Local schema validation.
+# Workaround: keep MGMT1 in storage_networks to force converged = true, then override
+# traffic_type and intent_name below to match the portal's single-intent pattern.
+management_adapters             = ["MGMT1"]
 rdma_enabled                    = false
 storage_connectivity_switchless = true
-
-# storage_networks must mirror management_adapters for a single-node converged lab.
-# The AVM module sets converged = true only when storage_adapters equals
-# management_adapters, which produces a single combined network intent.
-# An empty list causes a second intent with zero adapters that fails schema validation.
 storage_networks = [
-  { name = "MGMT1", networkAdapterName = "MGMT1", vlanId = "711" },
-  { name = "MGMT2", networkAdapterName = "MGMT2", vlanId = "712" }
+  { name = "MGMT1", networkAdapterName = "MGMT1", vlanId = "711" }
 ]
+
+# Network intent — matches the portal ARM template exactly:
+#   name: "Compute_Management", trafficType: ["Compute", "Management"], adapter: ["MGMT1"]
+intent_name  = "Compute_Management"
+traffic_type = ["Compute", "Management"]
 
 # ---------------------------------------------------------------------------
 # Deployment mode — see two-stage flow at the top of this file
@@ -158,7 +167,18 @@ is_exported = false
 # Deployment options
 # ---------------------------------------------------------------------------
 
-configuration_mode     = "Express"
-bitlocker_boot_volume  = false
-bitlocker_data_volumes = false
-enable_telemetry       = true
+configuration_mode        = "Express"
+bitlocker_boot_volume     = false
+bitlocker_data_volumes    = false
+enable_telemetry          = true
+
+# Security — matches the portal's Customized security settings.
+credential_guard_enforced = true
+
+# Observability — set to true for EU-region deployments.
+eu_location = true
+
+# Quorum witness — the portal ARM template uses no witness for single-node.
+# The AVM module still passes cloudAccountName to the API (module limitation)
+# but witnessType = "" means Azure will not use it for quorum.
+witness_type = ""
