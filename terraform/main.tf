@@ -72,9 +72,11 @@ resource "azurerm_storage_account" "witness" {
 # ---------------------------------------------------------------------------
 
 module "azure_local_cluster" {
-  # Check the registry link above for the latest available version.
-  source  = "Azure/avm-res-azurestackhci-cluster/azurerm"
-  version = "~> 2.0"
+  # Local fork of Azure/avm-res-azurestackhci-cluster/azurerm v2.x with three additions:
+  #   - networking_type and networking_pattern passed to hostNetwork (API 2025-09-15-preview)
+  #   - use_dhcp, enable_storage_auto_ip, streaming_data_client, episodic_data_upload exposed
+  #   - All three resource types upgraded to API version 2025-09-15-preview
+  source = "./modules/azurelocal"
 
   # Core identifiers
   name              = var.cluster_name
@@ -178,6 +180,12 @@ module "azure_local_cluster" {
   # managementComputeOnly pattern (Compute_Management intent, no Storage traffic).
   intent_name  = var.intent_name
   traffic_type = var.traffic_type
+
+  # Networking type and pattern — fields introduced in API 2025-09-15-preview.
+  # The portal uses "singleServerDeployment" + "managementComputeOnly" for single-node.
+  # Set to "" to omit the field and let Azure infer (backwards compatible with 2024 API behaviour).
+  networking_type    = var.networking_type
+  networking_pattern = var.networking_pattern
 
   # resource names are managed explicitly; no random suffix needed.
   random_suffix = false

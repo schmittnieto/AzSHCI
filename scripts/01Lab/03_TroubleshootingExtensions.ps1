@@ -62,8 +62,8 @@ $Settings = @{
 
 $ExtensionList = @(
     @{ Name = "AzureEdgeTelemetryAndDiagnostics"; Publisher = "Microsoft.AzureStack.Observability"; MachineExtensionType = "TelemetryAndDiagnostics";   EnableAutoUpgrade = $true;  TypeHandlerVersion = "2.0.33.0"      },
-    @{ Name = "AzureEdgeDeviceManagement";        Publisher = "Microsoft.Edge";                     MachineExtensionType = "DeviceManagementExtension"; EnableAutoUpgrade = $false; TypeHandlerVersion = "1.2602.2.3126" },
-    @{ Name = "AzureEdgeLifecycleManager";        Publisher = "Microsoft.AzureStack.Orchestration"; MachineExtensionType = "LcmController";             EnableAutoUpgrade = $false; TypeHandlerVersion = "30.2604.0.1243"},
+    @{ Name = "AzureEdgeDeviceManagement";        Publisher = "Microsoft.Edge";                     MachineExtensionType = "DeviceManagementExtension"; EnableAutoUpgrade = $false; TypeHandlerVersion = "1.2602.2.3116" },
+    @{ Name = "AzureEdgeLifecycleManager";        Publisher = "Microsoft.AzureStack.Orchestration"; MachineExtensionType = "LcmController";             EnableAutoUpgrade = $false; TypeHandlerVersion = "30.2601.0.1162"},
     @{ Name = "AzureEdgeRemoteSupport";           Publisher = "Microsoft.AzureStack.Observability"; MachineExtensionType = "EdgeRemoteSupport";         EnableAutoUpgrade = $true;  TypeHandlerVersion = "1.0.11.2"      }
 )
 
@@ -467,66 +467,20 @@ try {
     exit 1
 }
 
-# Step 9: Fix Failed Extensions and Add Missing Extensions
+# Step 9: Reconcile extensions — install missing, reinstall failed or wrong-version
 $currentStep++
-Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Fixing failed extensions and adding missing ones..."
-Write-Message "Identifying and fixing failed extensions, then adding any missing extensions on ARC VM '$($selectedARCVM.Name)'..." -Type "Info"
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Reconciling extensions..."
+Write-Message "Reconciling extensions on ARC VM '$($selectedARCVM.Name)'..." -Type "Info"
 try {
-    # Fix failed extensions
-    $FailedExtensions = $Extensions | Where-Object ProvisioningState -eq "Failed"
-
-    if ($FailedExtensions.Count -eq 0) {
-        Write-Message "No failed extensions found." -Type "Success"
-    } else {
-        foreach ($FailedExtension in $FailedExtensions) {
-            $Server = $FailedExtension.MachineName
-            Write-Message "Processing failed extension '$($FailedExtension.Name)' on server '$Server'..." -Type "Info"
-            
-            # Remove lock first
-            $Locks = Get-AzResourceLock -ResourceGroupName $ResourceGroupName | Where-Object ResourceID -like "*HybridCompute/machines/$Server*"
-            if ($Locks.Count -gt 0) {
-                foreach ($lock in $Locks) {
-                    Write-Message "Removing lock '$($lock.Name)' from server '$Server'..." -Type "Info"
-                    Remove-AzResourceLock -LockId $lock.LockId -Force -ErrorAction Stop
-                }
-                Write-Message "Locks removed from server '$Server'." -Type "Success"
-            }
-
-            # Remove the failed extension
-            Write-Message "Removing failed extension '$($FailedExtension.Name)' from server '$Server'..." -Type "Info"
-            Remove-AzConnectedMachineExtension -Name $FailedExtension.Name -ResourceGroupName $FailedExtension.ResourceGroupName -MachineName $Server -ErrorAction Stop
-            Write-Message "Failed extension '$($FailedExtension.Name)' removed from server '$Server'." -Type "Success"
-
-            # Re-add the extension
-            Write-Message "Reinstalling extension '$($FailedExtension.Name)' on server '$Server'..." -Type "Info"
-            $listEntry   = $ExtensionList | Where-Object { $_.Name -eq $FailedExtension.Name }
-            $autoUpgrade = if ($listEntry) { $listEntry.EnableAutoUpgrade }    else { $false }
-            $version     = if ($listEntry) { $listEntry.TypeHandlerVersion }   else { $null  }
-            $reinstallParams = @{
-                Name                   = $FailedExtension.Name
-                ResourceGroupName      = $FailedExtension.ResourceGroupName
-                MachineName            = $Server
-                Location               = $FailedExtension.Location
-                Publisher              = $FailedExtension.Publisher
-                Settings               = $Settings
-                ExtensionType          = $FailedExtension.MachineExtensionType
-                EnableAutomaticUpgrade = $autoUpgrade
-                ErrorAction            = "Stop"
-            }
-            if ($version) { $reinstallParams.TypeHandlerVersion = $version }
-            New-AzConnectedMachineExtension @reinstallParams
-            Write-Message "Extension '$($FailedExtension.Name)' reinstalled on server '$Server'." -Type "Success"
-        }
-    }
-
-    # Add missing extensions
-    Write-Message "Adding any missing Azure Connected Machine extensions..." -Type "Info"
     foreach ($Extension in $ExtensionList) {
-        # Check if the extension is already installed on the ARC VM
-        $isInstalled = $Extensions | Where-Object { $_.Name -eq $Extension.Name -and $_.MachineName -eq $selectedARCVM.Name }
 
-        if (-not $isInstalled) {
-            Write-Message "Installing missing extension '$($Extension.Name)' on server '$($selectedARCVM.Name)'..." -Type "Info"
+        $installed = $Extensions | Where-Object { $_.Name -eq $Extension.Name -and $_.MachineName -eq $selectedARCVM.Name } | Select-Object -First 1
+
+        if (-not $installed) {
+            # ----------------------------------------------------------------
+            # Case 1: extension is missing — install it
+            # ----------------------------------------------------------------
+            Write-Message "[$($Extension.Name)] Not installed. Installing version $($Extension.TypeHandlerVersion)..." -Type "Info"
             $installParams = @{
                 Name                   = $Extension.Name
                 ResourceGroupName      = $ResourceGroupName
@@ -539,14 +493,75 @@ try {
                 TypeHandlerVersion     = $Extension.TypeHandlerVersion
                 ErrorAction            = "Stop"
             }
-            New-AzConnectedMachineExtension @installParams
-            Write-Message "Extension '$($Extension.Name)' installed successfully on server '$($selectedARCVM.Name)'." -Type "Success"
+            New-AzConnectedMachineExtension @installParams | Out-Null
+            Write-Message "[$($Extension.Name)] Installed successfully." -Type "Success"
+
+        } elseif ($installed.ProvisioningState -eq "Failed") {
+            # ----------------------------------------------------------------
+            # Case 2: extension is in Failed state — remove (with lock check) and reinstall
+            # ----------------------------------------------------------------
+            $Server = $installed.MachineName
+            Write-Message "[$($Extension.Name)] State is Failed. Removing and reinstalling version $($Extension.TypeHandlerVersion)..." -Type "Warning"
+
+            $Locks = Get-AzResourceLock -ResourceGroupName $ResourceGroupName |
+                     Where-Object ResourceID -like "*HybridCompute/machines/$Server*"
+            foreach ($lock in $Locks) {
+                Write-Message "[$($Extension.Name)] Removing lock '$($lock.Name)'..." -Type "Info"
+                Remove-AzResourceLock -LockId $lock.LockId -Force -ErrorAction Stop
+            }
+
+            Remove-AzConnectedMachineExtension -Name $installed.Name -ResourceGroupName $ResourceGroupName -MachineName $Server -ErrorAction Stop
+            Write-Message "[$($Extension.Name)] Removed." -Type "Info"
+
+            $reinstallParams = @{
+                Name                   = $Extension.Name
+                ResourceGroupName      = $ResourceGroupName
+                MachineName            = $Server
+                Location               = $installed.Location
+                Publisher              = $Extension.Publisher
+                Settings               = $Settings
+                ExtensionType          = $Extension.MachineExtensionType
+                EnableAutomaticUpgrade = $Extension.EnableAutoUpgrade
+                TypeHandlerVersion     = $Extension.TypeHandlerVersion
+                ErrorAction            = "Stop"
+            }
+            New-AzConnectedMachineExtension @reinstallParams | Out-Null
+            Write-Message "[$($Extension.Name)] Reinstalled at version $($Extension.TypeHandlerVersion)." -Type "Success"
+
+        } elseif ($installed.TypeHandlerVersion -ne $Extension.TypeHandlerVersion) {
+            # ----------------------------------------------------------------
+            # Case 3: extension is installed but version does not match — remove and reinstall
+            # ----------------------------------------------------------------
+            $Server = $installed.MachineName
+            Write-Message "[$($Extension.Name)] Version mismatch (installed: $($installed.TypeHandlerVersion), expected: $($Extension.TypeHandlerVersion)). Reinstalling..." -Type "Warning"
+
+            Remove-AzConnectedMachineExtension -Name $installed.Name -ResourceGroupName $ResourceGroupName -MachineName $Server -ErrorAction Stop
+            Write-Message "[$($Extension.Name)] Removed version $($installed.TypeHandlerVersion)." -Type "Info"
+
+            $reinstallParams = @{
+                Name                   = $Extension.Name
+                ResourceGroupName      = $ResourceGroupName
+                MachineName            = $Server
+                Location               = $installed.Location
+                Publisher              = $Extension.Publisher
+                Settings               = $Settings
+                ExtensionType          = $Extension.MachineExtensionType
+                EnableAutomaticUpgrade = $Extension.EnableAutoUpgrade
+                TypeHandlerVersion     = $Extension.TypeHandlerVersion
+                ErrorAction            = "Stop"
+            }
+            New-AzConnectedMachineExtension @reinstallParams | Out-Null
+            Write-Message "[$($Extension.Name)] Reinstalled at version $($Extension.TypeHandlerVersion)." -Type "Success"
+
         } else {
-            Write-Message "Extension '$($Extension.Name)' already installed on server '$($selectedARCVM.Name)'. Skipping." -Type "Info"
+            # ----------------------------------------------------------------
+            # Case 4: extension is installed at the correct version — nothing to do
+            # ----------------------------------------------------------------
+            Write-Message "[$($Extension.Name)] OK — version $($installed.TypeHandlerVersion), state $($installed.ProvisioningState)." -Type "Success"
         }
     }
 } catch {
-    Write-Message "An error occurred while fixing failed extensions or adding missing ones. Error: $_" -Type "Error"
+    Write-Message "An error occurred while reconciling extensions. Error: $_" -Type "Error"
     exit 1
 }
 

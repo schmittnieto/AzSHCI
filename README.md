@@ -47,8 +47,10 @@ AzSHCI/
 │   └── 03VMDeployment/
 │       └── 20_SSHRDPArcVM.ps1         # SSH/RDP to Arc-managed VMs
 ├── terraform/
+│   ├── modules/
+│   │   └── azurelocal/                # Local fork of AVM module (see Terraform section)
 │   ├── providers.tf                   # Terraform and provider version constraints
-│   ├── main.tf                        # AVM module call
+│   ├── main.tf                        # Key Vault, storage account and local module call
 │   ├── variables.tf                   # Input variable definitions
 │   ├── outputs.tf                     # Key resource ID outputs
 │   └── terraform.tfvars.example       # Example variable values for this lab
@@ -64,7 +66,7 @@ Each folder under `scripts/` covers a distinct lifecycle phase:
 - **02Day2**: Ongoing operations, lab start/stop, image management, AKS Arc access, disk optimization.
 - **03VMDeployment**: Remote access to workload VMs running on top of the Azure Local cluster.
 
-The `terraform/` folder provides an Infrastructure-as-Code alternative to the manual portal deployment step. It uses the [Azure Verified Module for Azure Local](https://github.com/Azure/terraform-azurerm-avm-res-azurestackhci-cluster) to deploy the cluster after the node has been registered with Arc by `02_Cluster.ps1`.
+The `terraform/` folder provides an Infrastructure-as-Code alternative to the manual portal deployment step. It uses a local fork of the [Azure Verified Module for Azure Local](https://github.com/Azure/terraform-azurerm-avm-res-azurestackhci-cluster) (see the [Local module fork](#local-module-fork) section) to deploy the cluster after the node has been registered with Arc by `02_Cluster.ps1`.
 
 ---
 
@@ -192,11 +194,36 @@ Leave both empty to fall back to device code login.
 
 #### 4. `03_TroubleshootingExtensions.ps1`, Arc extension pre-staging
 
-> **Required before Terraform deployment.** When deploying via the Azure portal wizard, the three mandatory Arc extensions are installed automatically during the cluster creation flow. Terraform does not handle this step. The extensions must be present on the node **before** `terraform apply` is run or the `validatedeploymentsetting` step will fail with `ValidationFailed: Could not find any edge device... Please verify that the Device Management Extension is successfully installed`.
+> **Required before Terraform deployment.** When deploying via the Azure portal wizard, the mandatory Arc extensions are installed automatically during the cluster creation flow. Terraform does not handle this step. The extensions must be present on the node **before** `terraform apply` is run or the `validatedeploymentsetting` step will fail with `ValidationFailed: Could not find any edge device... Please verify that the Device Management Extension is successfully installed`.
 
 > When deploying through the portal wizard only, this script is not needed.
 
-It is an interactive tool that connects to Azure, retrieves Arc-connected machines with `CloudMetadataProvider = "AzSHCI"`, removes locks on failed extensions, reinstalls them and adds any missing ones from the required set (`TelemetryAndDiagnostics`, `DeviceManagementExtension`, `LcmController` and `EdgeRemoteSupport`).
+An interactive tool that connects to Azure, retrieves Arc-connected machines with `CloudMetadataProvider = "AzSHCI"` and reconciles the four required extensions on the selected node. For each extension the script checks three conditions in order:
+
+1. **Missing** — the extension is not installed at all: installs it.
+2. **Failed** — the extension is in a Failed provisioning state: removes any resource locks, removes the extension and reinstalls it.
+3. **Version mismatch** — the extension is installed but at a different version than the pinned value: removes and reinstalls with the exact target version regardless of whether the installed version is older or newer.
+
+The four required extensions and their pinned versions are:
+
+| Extension name | Publisher | Type | Version | Auto-upgrade |
+|---|---|---|---|---|
+| `AzureEdgeTelemetryAndDiagnostics` | `Microsoft.AzureStack.Observability` | `TelemetryAndDiagnostics` | `2.0.33.0` | Enabled |
+| `AzureEdgeDeviceManagement` | `Microsoft.Edge` | `DeviceManagementExtension` | `1.2602.2.3116` | Disabled |
+| `AzureEdgeLifecycleManager` | `Microsoft.AzureStack.Orchestration` | `LcmController` | `30.2601.0.1162` | Disabled |
+| `AzureEdgeRemoteSupport` | `Microsoft.AzureStack.Observability` | `EdgeRemoteSupport` | `1.0.11.2` | Enabled |
+
+After installing or reinstalling any extension the script polls Azure (up to 10 minutes, 20-second intervals) until all four extensions reach `Succeeded` state before returning.
+
+**Authentication** (set the variables at the top of the script before running):
+
+- If `$SPNAppId` and `$SPNSecret` are set, authenticates via Service Principal. `$TenantID` must also be provided.
+- If either SPN value is empty but an existing `Az` session is found, the script prompts whether to reuse it or start a new device code login.
+- If no session exists, falls back to device code login automatically.
+
+**Subscription and Resource Group:**
+
+- Set `$SubscriptionID` and `$ResourceGroupName` to skip interactive selection. Both default to the lab values but can be left empty for interactive prompts.
 
 ---
 
@@ -336,30 +363,27 @@ Key variable to adjust: `$LocalUser` (the local user account on the target VM; d
 > **Work in progress - not yet validated end-to-end.**
 > The Terraform path is still being tested and consolidated. No blog article will be published until a fully stable version is confirmed. Use the Azure portal wizard as the primary deployment method until further notice.
 
-The `terraform/` folder contains an Infrastructure-as-Code deployment for the Azure Local cluster using the [Azure Verified Module (AVM)](https://github.com/Azure/terraform-azurerm-avm-res-azurestackhci-cluster). It is a direct alternative to clicking through the Azure portal after Arc registration completes.
+The `terraform/` folder contains an Infrastructure-as-Code deployment for the Azure Local cluster. It is a direct alternative to clicking through the Azure portal after Arc registration completes.
 
 ### Pre-requisites before running Terraform
 
-The Azure portal wizard installs the mandatory Arc extensions automatically during the deployment wizard flow. When deploying via Terraform those extensions must be present on the node **before** `terraform apply` is run. The three required extensions are:
+The Azure portal wizard installs the mandatory Arc extensions automatically during the deployment wizard flow. When deploying via Terraform those extensions must be present on the node **before** `terraform apply` is run. Run `scripts/01Lab/03_TroubleshootingExtensions.ps1` first.
 
-- `TelemetryAndDiagnostics`
-- `DeviceManagementExtension`
-- `LcmController`
-
-Run `scripts/01Lab/03_TroubleshootingExtensions.ps1` against the Arc-registered node to install them. Terraform will fail at the `validatedeploymentsetting` step with a `ValidationFailed` error if any of these extensions are missing.
+All four extensions must be present and at the correct pinned version (see the [script reference](#4-03_troubleshootingextensionsps1-arc-extension-pre-staging) above). Terraform will fail at the `validatedeploymentsetting` step with a `ValidationFailed` error if any extension is missing.
 
 ### What it creates
 
-Terraform creates the following resources directly (before the AVM module runs):
+Terraform creates the following resources directly (before the local module runs):
 
 - **Key Vault**: stores deployment secrets and certificates. Created with `purge_protection_enabled = false` so it can be destroyed and recreated with the same name without a 90-day wait.
 - **Cloud witness storage account**: used by the cluster as a cloud witness for quorum.
 
-The AVM module then creates and wires together:
+The local module (`modules/azurelocal/`) then creates and wires together:
 
 - Azure Local cluster resource (`Microsoft.AzureStackHCI/clusters`)
 - Arc settings and Arc extensions
 - Custom location and resource bridge
+- All required RBAC role assignments
 
 ### Prerequisites for Terraform
 
@@ -370,6 +394,7 @@ The AVM module then creates and wires together:
 | Azure API provider | `azure/azapi ~> 2.4` |
 | Azure AD provider | `hashicorp/azuread ~> 2.50` |
 | Node Arc-registered | `02_Cluster.ps1` must have completed successfully |
+| Arc extensions pre-staged | `03_TroubleshootingExtensions.ps1` must have completed successfully |
 | SPN with required RBAC | Created by `00_AzurePreRequisites.ps1` |
 
 ### Files
@@ -377,10 +402,43 @@ The AVM module then creates and wires together:
 | File | Purpose |
 |---|---|
 | `providers.tf` | Terraform version constraint and provider configuration |
-| `main.tf` | Key Vault, storage account and AVM module call with annotated parameters |
+| `main.tf` | Key Vault, storage account and local module call with annotated parameters |
 | `variables.tf` | All input variable definitions with descriptions and defaults |
 | `outputs.tf` | Exports cluster ID, Key Vault ID and URI, custom location ID and witness storage account ID |
 | `terraform.tfvars.example` | Ready-to-use example pre-filled with the lab defaults |
+| `modules/azurelocal/` | Local fork of the AVM module (see section below) |
+
+### Local module fork
+
+The upstream [Azure Verified Module (AVM) for Azure Local](https://github.com/Azure/terraform-azurerm-avm-res-azurestackhci-cluster) v2.x uses API version `2024-02-15-preview` for the `deploymentSettings` resource. That API version does not expose two fields that the Azure portal sets for single-node deployments:
+
+| Field | Portal value (single-node) | AVM v2.x |
+|---|---|---|
+| `networkingType` | `singleServerDeployment` | not supported |
+| `networkingPattern` | `managementComputeOnly` | not supported |
+
+Additionally, several fields in the AVM module are hardcoded rather than exposed as variables (`streamingDataClient`, `episodicDataUpload`, `enableStorageAutoIp`, `useDhcp`).
+
+To address this, the upstream module was forked into `terraform/modules/azurelocal/`. The fork makes the following targeted changes relative to v2.0.2:
+
+| File | Change |
+|---|---|
+| `main.tf` | Cluster resource API: `2024-02-15-preview` → `2025-09-15-preview` |
+| `validate.tf` | `deploymentSettings` resource API: same version bump |
+| `deploy.tf` | `deploymentSettings` update resource API: same version bump |
+| `locals.tf` | `host_network`: `networkingType` and `networkingPattern` added conditionally via `merge()` when non-empty; `enableStorageAutoIp` uses `var.enable_storage_auto_ip`; `infrastructure_network.useDhcp` uses `var.use_dhcp`; `observability` fields use variables instead of hardcoded `true` |
+| `variables.tf` | Six new variables: `networking_type`, `networking_pattern`, `use_dhcp`, `enable_storage_auto_ip`, `streaming_data_client`, `episodic_data_upload` |
+
+All other module files are identical to the upstream version. The fork is intentionally minimal, it tracks only the changes required to match the portal's single-node deployment pattern and does not alter module logic, provider requirements or outputs.
+
+**Lab values set in `terraform.tfvars`:**
+
+```hcl
+networking_type    = "singleServerDeployment"
+networking_pattern = "managementComputeOnly"
+```
+
+Set either value to `""` to omit the field from the API payload and fall back to the behaviour of the upstream module.
 
 ### Configuration
 

@@ -306,3 +306,23 @@ variable "traffic_type" {
   description = "Traffic types assigned to the converged network intent. The portal uses [Compute, Management] (no Storage) for single-node managementComputeOnly deployments."
   default     = ["Management", "Compute", "Storage"]
 }
+
+variable "networking_type" {
+  type        = string
+  description = <<-EOT
+    The networking type passed to hostNetwork in the deploymentSettings body (API 2025-09-15-preview).
+    Leave empty to omit the field. The portal uses "singleServerDeployment" for single-node labs.
+    Allowed values: "", "switchedMultiServerDeployment", "switchlessMultiServerDeployment", "singleServerDeployment".
+  EOT
+  default     = ""
+}
+
+variable "networking_pattern" {
+  type        = string
+  description = <<-EOT
+    The networking pattern passed to hostNetwork in the deploymentSettings body (API 2025-09-15-preview).
+    Leave empty to omit the field. The portal uses "managementComputeOnly" for single-node labs.
+    Allowed values: "", "hyperConverged", "convergedManagementCompute", "convergedComputeStorage", "managementComputeOnly", "custom".
+  EOT
+  default     = ""
+}

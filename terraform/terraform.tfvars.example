@@ -154,6 +154,11 @@ storage_networks = [
 intent_name  = "Compute_Management"
 traffic_type = ["Compute", "Management"]
 
+# Networking type and pattern, present in the QuickStart ARM template but rejected
+# by the live API (ObjectAdditionalProperties). Set to "" to omit from the payload.
+networking_type    = ""
+networking_pattern = ""
+
 # ---------------------------------------------------------------------------
 # Deployment mode — see two-stage flow at the top of this file
 #
