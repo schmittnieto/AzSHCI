@@ -81,6 +81,25 @@ locals {
       scaleUnits = [
         {
           deploymentData = local.deployment_data_omit_null
+          # sbePartnerInfo is present in the ARM QuickStart template even when
+          # no OEM / Solution Builder Extension (SBE) partner is involved. Omitting
+          # it causes Azure to push an incomplete LcmController extension settings
+          # object (non-null publicSettings with empty Payload) which prevents the
+          # node's DownloadDeploymentPackage from falling through to the cloud
+          # manifest fallback path. Sending an explicit empty block matches the
+          # ARM template exactly and ensures the deployment control-plane behaves
+          # identically to a portal/ARM deployment.
+          sbePartnerInfo = {
+            sbeDeploymentInfo = {
+              version                 = ""
+              family                  = ""
+              publisher               = ""
+              sbeManifestSource       = ""
+              sbeManifestCreationDate = null
+            }
+            partnerProperties = []
+            credentialList    = []
+          }
         }
       ]
     }
@@ -124,7 +143,7 @@ locals {
       secretLocation = "${local.secrets_location}secrets/${local.keyvault_secret_names[secret.eceSecretName]}"
     }
   ]
-  owned_user_storages = [for storage in local.decoded_user_storages : storage if lower(storage.extendedLocation.name) == lower(data.azapi_resource.customlocation.id)]
+  owned_user_storages = var.deployment_completed ? [for storage in local.decoded_user_storages : storage if lower(storage.extendedLocation.name) == lower(data.azapi_resource.customlocation[0].id)] : []
   rdma_adapter_properties = {
     jumboPacket             = var.rdma_jumbo_packet
     networkDirect           = "Enabled"
@@ -145,13 +164,31 @@ locals {
       }
     ]
   ])
+  rg_role_assignments = flatten([
+    for server_key, arcserver in data.azurerm_arc_machine.arcservers : [
+      for role_key, role_id in local.rg_roles : {
+        server_name = server_key
+        principal_id = arcserver.identity[0].principal_id
+        role_id      = "/subscriptions/${local.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/${role_id}"
+        role_key     = role_key
+      }
+    ]
+  ])
   role_definition_resource_substring = "/providers/Microsoft.Authorization/roleDefinitions"
   roles = {
     KVSU = "Key Vault Secrets User",
   }
+  # Roles assigned to the Arc machine identity at resource group scope.
+  # Required by the HCI deployment control plane — present in the ARM QuickStart template
+  # but absent from the upstream AVM module rolebindings.
+  rg_roles = {
+    DMR   = "865ae368-6a45-4bd1-8fbf-0d5151f56fc1" # Azure Stack HCI Device Management Role
+    INFRA = "c99c945f-8bd1-4fb1-a903-01460aae6068" # Azure Stack HCI Connected InfraVMs
+  }
   rp_roles = var.create_hci_rp_role_assignments ? {
     ACMRM = "Azure Connected Machine Resource Manager",
   } : {}
+  subscription_id = local.resource_group_parts[2]
   secrets_location = var.secrets_location == "" ? local.key_vault.vault_uri : var.secrets_location
   security_settings = var.operation_type == "ClusterUpgrade" ? null : {
     hvciProtection                = var.hvci_protection

@@ -17,6 +17,44 @@
 # Module source:   https://github.com/Azure/terraform-azurerm-avm-res-azurestackhci-cluster
 
 # ---------------------------------------------------------------------------
+# Import block for existing edgeDevices resources.
+#
+# Microsoft.AzureStackHCI/edgeDevices is created by portal and ARM template
+# deployments and persists across terraform destroy (it is not managed by
+# Terraform state until imported). When import_edge_devices = true this block
+# imports the existing resource automatically so that azapi_resource.edge_device
+# does not fail with "Resource already exists".
+#
+# Set import_edge_devices = false in terraform.tfvars on a completely fresh
+# environment where no portal or ARM deployment has been run before.
+# ---------------------------------------------------------------------------
+
+import {
+  for_each = var.import_edge_devices ? { for s in var.servers : s.name => s } : {}
+  id       = "/subscriptions/${var.subscription_id}/resourceGroups/${var.resource_group_name}/providers/Microsoft.HybridCompute/machines/${each.key}/providers/Microsoft.AzureStackHCI/edgeDevices/default"
+  to       = module.azure_local_cluster.azapi_resource.edge_device[each.key]
+}
+
+# ---------------------------------------------------------------------------
+# Import block for existing deploymentSettings resource.
+#
+# deploymentSettings/default may already exist in Azure if a previous
+# terraform apply created it but timed out before the state could be saved
+# (e.g. "context deadline exceeded" during the long-running validation).
+# When import_deployment_settings = true this block imports the resource so
+# that the next apply does not fail with "Resource already exists".
+#
+# Set import_deployment_settings = false on a fresh environment where no
+# prior apply has been attempted.
+# ---------------------------------------------------------------------------
+
+import {
+  for_each = var.import_deployment_settings ? { "default" = "default" } : {}
+  id       = "/subscriptions/${var.subscription_id}/resourceGroups/${var.resource_group_name}/providers/Microsoft.AzureStackHCI/clusters/${var.cluster_name}/deploymentSettings/default"
+  to       = module.azure_local_cluster.azapi_resource.validatedeploymentsetting
+}
+
+# ---------------------------------------------------------------------------
 # Data sources
 # ---------------------------------------------------------------------------
 
@@ -26,6 +64,21 @@ data "azurerm_resource_group" "rg" {
 
 # Used to set the Key Vault tenant ID to the current subscription tenant.
 data "azurerm_client_config" "current" {}
+
+# ---------------------------------------------------------------------------
+# Random 4-digit suffix for globally unique resource names.
+# Persisted in Terraform state so the same names are reused across applies.
+# ---------------------------------------------------------------------------
+
+resource "random_integer" "name_suffix" {
+  min = 1000
+  max = 9999
+}
+
+locals {
+  kv_name = "${var.keyvault_name}${random_integer.name_suffix.result}"
+  sa_name = "${var.witness_storage_account_name}${random_integer.name_suffix.result}"
+}
 
 # ---------------------------------------------------------------------------
 # Key Vault
@@ -40,7 +93,7 @@ data "azurerm_client_config" "current" {}
 # ---------------------------------------------------------------------------
 
 resource "azurerm_key_vault" "deployment_keyvault" {
-  name                       = var.keyvault_name
+  name                       = local.kv_name
   location                   = data.azurerm_resource_group.rg.location
   resource_group_name        = data.azurerm_resource_group.rg.name
   tenant_id                  = data.azurerm_client_config.current.tenant_id
@@ -59,7 +112,7 @@ resource "azurerm_key_vault" "deployment_keyvault" {
 # ---------------------------------------------------------------------------
 
 resource "azurerm_storage_account" "witness" {
-  name                     = var.witness_storage_account_name
+  name                     = local.sa_name
   resource_group_name      = data.azurerm_resource_group.rg.name
   location                 = data.azurerm_resource_group.rg.location
   account_tier             = "Standard"
@@ -124,9 +177,9 @@ module "azure_local_cluster" {
   # Key Vault and cloud witness storage account.
   # Both are pre-created above; the module performs data lookups by name.
   create_key_vault               = false
-  keyvault_name                  = azurerm_key_vault.deployment_keyvault.name
+  keyvault_name                  = local.kv_name
   create_witness_storage_account = false
-  witness_storage_account_name   = azurerm_storage_account.witness.name
+  witness_storage_account_name   = local.sa_name
 
   # Custom location and site
   custom_location_name = var.custom_location_name
@@ -193,6 +246,9 @@ module "azure_local_cluster" {
   resource_group_location = data.azurerm_resource_group.rg.location
 
   enable_telemetry = var.enable_telemetry
+
+  # Post-deployment resource reads — only enable after a successful full deployment.
+  deployment_completed = var.deployment_completed
 
   depends_on = [
     azurerm_key_vault.deployment_keyvault,

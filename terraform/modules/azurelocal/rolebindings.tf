@@ -29,3 +29,14 @@ resource "azurerm_role_assignment" "machine_role_assign" {
     data.azurerm_key_vault.key_vault
   ]
 }
+
+resource "azurerm_role_assignment" "machine_rg_role_assign" {
+  for_each = {
+    for idx, assignment in local.rg_role_assignments :
+    "${assignment.server_name}_${assignment.role_key}" => assignment
+  }
+
+  principal_id       = each.value.principal_id
+  scope              = var.resource_group_id
+  role_definition_id = each.value.role_id
+}

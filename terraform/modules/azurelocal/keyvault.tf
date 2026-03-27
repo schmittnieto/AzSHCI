@@ -10,7 +10,7 @@ resource "azurerm_key_vault" "deployment_keyvault" {
   resource_group_name             = local.resource_group_name
   sku_name                        = "standard"
   tenant_id                       = var.tenant_id == "" ? data.azurerm_client_config.current[0].tenant_id : var.tenant_id
-  enable_rbac_authorization       = true
+  rbac_authorization_enabled      = true
   enabled_for_deployment          = true
   enabled_for_disk_encryption     = true
   enabled_for_template_deployment = true

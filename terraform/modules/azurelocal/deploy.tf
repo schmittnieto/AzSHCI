@@ -1,7 +1,7 @@
 resource "azapi_update_resource" "deploymentsetting" {
-  count = var.is_exported ? 0 : 1
+  count = var.is_exported ? 1 : 0
 
-  type = "Microsoft.AzureStackHCI/clusters/deploymentSettings@2026-03-01-preview"
+  type = "Microsoft.AzureStackHCI/clusters/deploymentSettings@2025-09-15-preview"
   body = {
     properties = {
       deploymentMode = "Deploy"
@@ -12,6 +12,7 @@ resource "azapi_update_resource" "deploymentsetting" {
 
   timeouts {
     create = "24h"
+    update = "24h"
     delete = "60m"
   }
 

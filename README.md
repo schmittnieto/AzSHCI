@@ -1,7 +1,8 @@
 # AzSHCI - Azure Local Deployment Scripts
 
 <p align="center">
-  <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://badgen.net/https/raw.githubusercontent.com/schmittnieto/AzSHCI/refs/heads/main/lastdeployment.json?cache=300"></a><br>
+  <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://badgen.net/https/raw.githubusercontent.com/schmittnieto/AzSHCI/refs/heads/main/lastdeployment.json?cache=300"></a>
+  <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://badgen.net/https/raw.githubusercontent.com/schmittnieto/AzSHCI/refs/heads/main/terraform/lastdeployment.json?cache=300"></a><br>
   <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://img.shields.io/github/languages/top/schmittnieto/AzSHCI.svg"></a>
   <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://img.shields.io/github/languages/code-size/schmittnieto/AzSHCI.svg"></a>
   <a href="https://github.com/schmittnieto/AzSHCI"><img src="https://img.shields.io/github/v/release/schmittnieto/AzSHCI"></a><br>
@@ -10,6 +11,47 @@
 **AzSHCI** is a collection of PowerShell scripts to deploy, configure and manage **Azure Local** (formerly Azure Stack HCI) in testing, lab and proof-of-concept environments running on a single Hyper-V host.
 
 For a detailed walkthrough, visit: https://schmitt-nieto.com/blog/azure-local-demolab/
+
+---
+
+## Table of Contents
+
+- [Repository Structure](#repository-structure)
+- [Default Lab Configuration](#default-lab-configuration)
+- [Script Reference](#script-reference)
+  - [01Lab: Initial Lab Deployment](#01lab-initial-lab-deployment)
+  - [02Day2: Day-Two Operations](#02day2-day-two-operations)
+  - [03VMDeployment: VM Access](#03vmdeployment-vm-access)
+- [Terraform Deployment](#terraform-deployment)
+  - [Pre-requisites before running Terraform](#pre-requisites-before-running-terraform)
+  - [What it creates](#what-it-creates)
+  - [Prerequisites for Terraform](#prerequisites-for-terraform)
+  - [Files](#files)
+  - [Local module fork](#local-module-fork)
+  - [Configuration](#configuration)
+  - [Authentication](#authentication)
+  - [Two-stage deployment](#two-stage-deployment)
+  - [RDMA](#rdma)
+  - [Security notes](#security-notes)
+- [Prerequisites](#prerequisites)
+  - [Hardware](#hardware)
+  - [Software](#software)
+  - [Optional / script-specific dependencies](#optional--script-specific-dependencies)
+- [Usage](#usage)
+  - [1. Clone the repository](#1-clone-the-repository)
+  - [2. Set the execution policy (if needed)](#2-set-the-execution-policy-if-needed)
+  - [3. Review and customise variables](#3-review-and-customise-variables)
+  - [4. Run the lab deployment scripts in order](#4-run-the-lab-deployment-scripts-in-order)
+  - [4b. Deploy the cluster with Terraform (optional)](#4b-deploy-the-cluster-with-terraform-optional-alternative-to-the-portal)
+  - [5. Day-2 operations](#5-day-2-operations)
+  - [6. VM access](#6-vm-access)
+  - [7. Teardown](#7-teardown)
+- [CI/CD: GitHub Actions](#cicd-github-actions)
+- [Safety and Security Notes](#safety-and-security-notes)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
+- [Contact](#contact)
 
 ---
 
@@ -104,7 +146,7 @@ These scripts are opinionated and ship with hardcoded defaults. **Review and adj
 
 ## Script Reference
 
-### 01Lab, Initial Lab Deployment
+### 01Lab: Initial Lab Deployment
 
 #### 1. `00_Infra_AzHCI.ps1`, Infrastructure and VM provisioning
 
@@ -240,7 +282,7 @@ After installing or reinstalling any extension the script polls Azure (up to 10 
 
 ---
 
-### 02Day2, Day-Two Operations
+### 02Day2: Day-Two Operations
 
 #### 1. `10_StartStopAzSHCI.ps1`, Ordered lab start/stop
 
@@ -337,7 +379,7 @@ Compress-Vhdx -Path "E:\AzureLocalLab" -IncludeSubfolders -Verbose
 
 ---
 
-### 03VMDeployment, VM Access
+### 03VMDeployment: VM Access
 
 #### 1. `20_SSHRDPArcVM.ps1`, SSH/RDP to Arc VMs
 
@@ -360,8 +402,7 @@ Key variable to adjust: `$LocalUser` (the local user account on the target VM; d
 
 ## Terraform Deployment
 
-> **Work in progress - not yet validated end-to-end.**
-> The Terraform path is still being tested and consolidated. No blog article will be published until a fully stable version is confirmed. Use the Azure portal wizard as the primary deployment method until further notice.
+> **Validated end-to-end.** The Terraform path has been successfully used to complete a full Azure Local deployment (Stage 1 Validate + Stage 2 Deploy) on this lab configuration. It is a supported alternative to the Azure portal wizard.
 
 The `terraform/` folder contains an Infrastructure-as-Code deployment for the Azure Local cluster. It is a direct alternative to clicking through the Azure portal after Arc registration completes.
 

@@ -19,6 +19,6 @@ output "witness_storage_account_id" {
 }
 
 output "custom_location_id" {
-  description = "Azure resource ID of the Arc custom location."
-  value       = module.azure_local_cluster.customlocation.id
+  description = "Azure resource ID of the Arc custom location. null until deployment_completed = true."
+  value       = module.azure_local_cluster.customlocation != null ? module.azure_local_cluster.customlocation.id : null
 }

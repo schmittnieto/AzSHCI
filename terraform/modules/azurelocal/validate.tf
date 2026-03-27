@@ -9,7 +9,7 @@ data "azurerm_arc_machine" "arcservers" {
 }
 
 resource "azapi_resource" "validatedeploymentsetting" {
-  type                    = "Microsoft.AzureStackHCI/clusters/deploymentSettings@2026-03-01-preview"
+  type                    = "Microsoft.AzureStackHCI/clusters/deploymentSettings@2025-09-15-preview"
   schema_validation_enabled = false
   body = {
     properties = local.deployment_setting_properties_omit_null
@@ -23,12 +23,21 @@ resource "azapi_resource" "validatedeploymentsetting" {
     azurerm_key_vault_secret.local_admin_credential,
     azurerm_key_vault_secret.witness_storage_key,
     azapi_resource.cluster,
+    azapi_resource.edge_device,
     azurerm_role_assignment.service_principal_role_assign,
+    azurerm_role_assignment.machine_role_assign,
+    azurerm_role_assignment.machine_rg_role_assign,
   ]
+
+  timeouts {
+    create = "2h"
+    update = "2h"
+    delete = "1h"
+  }
 
   lifecycle {
     ignore_changes = [
-      body.properties.deploymentMode
+      body.properties.deploymentMode,
     ]
   }
 }

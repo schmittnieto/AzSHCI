@@ -6,3 +6,12 @@ terraform/terraform.tfvars
 terraform/terraform.tfstate
 terraform/terraform.tfstate.backup
 terraform/*.tfplan
+
+#ARM
+ARM/
+
+# Nuget Store
+NugetStore/
+
+# Packages
+Packages/

@@ -804,3 +804,9 @@ variable "witness_type" {
   default     = "Cloud"
   description = "The type of the witness."
 }
+
+variable "deployment_completed" {
+  type        = bool
+  default     = false
+  description = "Set to true after a successful full deployment to enable reading of post-deployment resources (arcbridge, customlocation, user_storages). Keep false while deploying or retrying a failed deployment."
+}

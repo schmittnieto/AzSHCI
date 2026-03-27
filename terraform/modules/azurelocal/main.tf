@@ -1,4 +1,5 @@
 data "azapi_resource" "arcbridge" {
+  count     = var.deployment_completed ? 1 : 0
   type      = "Microsoft.ResourceConnector/appliances@2022-10-27"
   name      = "${var.name}-arcbridge"
   parent_id = var.resource_group_id
@@ -7,6 +8,7 @@ data "azapi_resource" "arcbridge" {
 }
 
 data "azapi_resource" "customlocation" {
+  count     = var.deployment_completed ? 1 : 0
   type      = "Microsoft.ExtendedLocation/customLocations@2021-08-15"
   name      = var.custom_location_name
   parent_id = var.resource_group_id
@@ -31,7 +33,7 @@ data "azapi_resource" "arc_settings" {
 }
 
 resource "azapi_resource" "cluster" {
-  type = "Microsoft.AzureStackHCI/clusters@2026-03-01-preview"
+  type = "Microsoft.AzureStackHCI/clusters@2025-09-15-preview"
   body = {
     properties = {}
   }
@@ -44,7 +46,10 @@ resource "azapi_resource" "cluster" {
     type = "SystemAssigned"
   }
 
-  depends_on = [azurerm_role_assignment.service_principal_role_assign]
+  depends_on = [
+    azurerm_role_assignment.service_principal_role_assign,
+    azapi_resource.edge_device,
+  ]
 
   lifecycle {
     ignore_changes = [

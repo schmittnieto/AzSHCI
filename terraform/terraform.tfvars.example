@@ -159,6 +159,16 @@ traffic_type = ["Compute", "Management"]
 networking_type    = ""
 networking_pattern = ""
 
+# Set to false on a completely fresh environment where no portal or ARM deployment
+# has been run before (i.e. the edgeDevices resource does not yet exist in Azure).
+import_edge_devices = true
+
+# Set to true when a previous terraform apply created deploymentSettings in Azure
+# but timed out before saving state (e.g. "context deadline exceeded").
+# Set to false on a fresh environment where deploymentSettings does not yet exist.
+import_deployment_settings = false
+
+
 # ---------------------------------------------------------------------------
 # Deployment mode — see two-stage flow at the top of this file
 #

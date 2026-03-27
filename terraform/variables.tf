@@ -326,3 +326,36 @@ variable "networking_pattern" {
   EOT
   default     = ""
 }
+
+variable "import_edge_devices" {
+  type        = bool
+  default     = true
+  description = <<-EOT
+    When true, Terraform imports the existing Microsoft.AzureStackHCI/edgeDevices/default resource
+    for each Arc machine instead of creating it. Set to true if the edge device already exists in
+    Azure (e.g. from a prior portal or ARM template deployment). Set to false on a completely fresh
+    environment where no deployment has been attempted before.
+  EOT
+}
+
+variable "import_deployment_settings" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    When true, Terraform imports the existing deploymentSettings/default resource instead of
+    creating it. Set to true when a previous terraform apply created the resource in Azure but
+    timed out before saving it to state (e.g. context deadline exceeded during validation).
+    Set to false on a fresh environment where deploymentSettings does not yet exist.
+  EOT
+}
+
+variable "deployment_completed" {
+  type        = bool
+  default     = false
+  description = <<-EOT
+    Set to true only after a successful full deployment (Stage 2 Deploy finished without errors).
+    Controls whether Terraform reads post-deployment resources that are created by the Azure
+    deployment engine (arcbridge, customlocation). Keep false while deploying or retrying a
+    failed deployment — these resources do not exist until all deployment steps complete.
+  EOT
+}
