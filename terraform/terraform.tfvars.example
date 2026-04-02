@@ -9,18 +9,15 @@
 # ---------------------------------------------------------------------------
 # DEPLOYMENT FLOW
 #
-# Single apply (recommended, is_exported = true):
-#   terraform init
-#   terraform plan
-#   terraform apply
-#   Creates the Key Vault, witness storage account, and submits the deployment
-#   with deploymentMode = "Deploy". Azure validates the configuration internally
-#   before starting the full cluster provisioning (~30-60 minutes).
+# Stage 1 — Validate (is_exported = false)
+#   terraform init && terraform apply
+#   Creates Key Vault, storage account, assigns roles, registers edgeDevices,
+#   then validates the Azure Local deployment configuration (~60 minutes).
+#   Review the result in the Azure portal before proceeding.
 #
-# Optional validate-only run (is_exported = false):
-#   Set is_exported = false below, then run terraform apply.
-#   Azure validates settings and surfaces errors (~10 minutes) without starting
-#   provisioning. Change back to true and run terraform apply again to deploy.
+# Stage 2 — Deploy  (is_exported = true)
+#   Change is_exported to true, then: terraform apply
+#   Triggers full cluster provisioning (~180 minutes).
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
@@ -28,8 +25,7 @@
 # ---------------------------------------------------------------------------
 
 # Set to false before terraform destroy when the Arc node has been manually
-# deleted from Azure. This skips the cluster module entirely (including the
-# Arc machine data source lookup that fails when the node is gone).
+# deleted from Azure. This skips the cluster module entirely.
 enable_cluster_module = true
 
 # ---------------------------------------------------------------------------
@@ -37,9 +33,7 @@ enable_cluster_module = true
 # ---------------------------------------------------------------------------
 
 # TODO: replace with your Azure subscription ID
-subscription_id = "00000000-0000-0000-0000-000000000000"
-
-# Resource group created (or selected) by scripts/01Lab/00_AzurePreRequisites.ps1
+subscription_id     = "00000000-0000-0000-0000-000000000000"
 resource_group_name = "rg-azlocal-lab"
 
 # ---------------------------------------------------------------------------
@@ -47,7 +41,7 @@ resource_group_name = "rg-azlocal-lab"
 # ---------------------------------------------------------------------------
 
 # cluster_name becomes both the Azure resource name and the internal cluster name.
-# site_id is used as namingPrefix (matches ARM's namingPrefix, e.g. "HCI01").
+# site_id is used as namingPrefix (e.g. "HCI01").
 cluster_name         = "azure-local"
 site_id              = "HCI01"
 custom_location_name = "azlocal-customlocation"
@@ -65,35 +59,32 @@ adou_path = "OU=HCI,OU=Servers,OU=_LAB,DC=azurelocal,DC=local"
 # ---------------------------------------------------------------------------
 # Credentials
 #
-# WARNING: these are intentional lab defaults. Change them before running
-# and never commit real credentials to source control.
+# WARNING: these are intentional lab defaults — change before running and
+# never commit real credentials to source control.
 # ---------------------------------------------------------------------------
 
 # LCM deployment user created inside the domain by 01_DC.ps1
 deployment_user          = "hciadmin"
-deployment_user_password = "dgemsc#utquMHDHp3M"
+deployment_user_password = "TODO-change-me"
 
-# Local administrator account on the Azure Local node.
-# Setupuser is created by 02_Cluster.ps1 (not the built-in Administrator).
+# Local administrator account on the Azure Local node (created by 02_Cluster.ps1)
 local_admin_user     = "Setupuser"
-local_admin_password = "dgemsc#utquMHDHp3M"
+local_admin_password = "TODO-change-me"
 
 # ---------------------------------------------------------------------------
 # Network
 #
-# Values must match the static IP configuration applied to the node by
-# scripts/01Lab/02_Cluster.ps1.
-# The starting/ending range provides infrastructure IPs for management
-# VIPs and load balancer addresses. Keep it outside the node IP (.10).
+# Values must match the static IP configuration applied by 02_Cluster.ps1.
+# The starting/ending range reserves infrastructure IPs (VIPs, LB addresses).
+# Keep it outside the node IP.
 # ---------------------------------------------------------------------------
 
 default_gateway  = "172.19.18.1"
 dns_servers      = ["172.19.18.2"]
 starting_address = "172.19.18.20"
 # Azure Local requires ~6 infrastructure IPs for single-node deployments.
-# This lab reserves 10 (.20–.30) to simplify the deployment.
-ending_address   = "172.19.18.30"
-subnet_mask      = "255.255.255.0"
+ending_address = "172.19.18.26"
+subnet_mask    = "255.255.255.0"
 
 # ---------------------------------------------------------------------------
 # Servers
@@ -113,26 +104,23 @@ servers = [
 # ---------------------------------------------------------------------------
 
 # SPN created by scripts/01Lab/00_AzurePreRequisites.ps1.
-# Stored as the DefaultARBApplication secret in Key Vault (base64 "id:secret").
-# Azure Local LCM uses this credential to authenticate the Arc Resource Bridge
-# (custom location management plane) to Azure during and after deployment.
 # TODO: replace with the AppId and secret from 00_AzurePreRequisites.ps1 output
 service_principal_id     = "00000000-0000-0000-0000-000000000000"
-service_principal_secret = "your-spn-client-secret"
+service_principal_secret = "TODO-your-spn-client-secret"
 
 # Object ID of the built-in Microsoft.AzureStackHCI resource provider SPN.
-# Retrieve it with (requires Az PowerShell):
-#   (Get-AzADServicePrincipal -ApplicationId "1412d89f-b8a8-4111-b4fd-e82905cbd85d").Id
+# Required for the "Azure Connected Machine Resource Manager" role assignment
+# that enables Arc extension installation.
+# Retrieve with: (Get-AzADServicePrincipal -ApplicationId "1412d89f-b8a8-4111-b4fd-e82905cbd85d").Id
 # TODO: replace with the value from the command above
 rp_service_principal_object_id = "00000000-0000-0000-0000-000000000000"
 
 # ---------------------------------------------------------------------------
 # Key Vault and cloud witness storage account
 #
-# Both resources are created by Terraform before the AVM module runs.
-# The names must be globally unique. The Key Vault uses purge_protection_enabled
-# = false so it can be deleted and recreated with the same name after
-# terraform destroy (the provider purges the soft-deleted vault automatically).
+# Base name prefixes only. A random 4-digit integer is appended automatically
+# by main.tf on the first apply and kept stable in state.
+# Example: kv-azlocal-lab3847, saazlocallab3847
 # ---------------------------------------------------------------------------
 
 keyvault_name                = "kv-azlocal-lab"
@@ -142,25 +130,18 @@ witness_storage_account_name = "saazlocallab"
 # Network adapters
 #
 # management_adapters must match the NIC names configured inside the Azure
-# Local OS by scripts/01Lab/02_Cluster.ps1 (MGMT1 and MGMT2 in the default lab).
+# Local OS by 02_Cluster.ps1. MGMT1 only for single-node (portal pattern).
 #
-# rdma_enabled = false is correct for this single-node lab:
-#   - No cross-node storage traffic exists (switchless storage).
-#   - MGMT1 and MGMT2 are virtual adapters in a nested Hyper-V VM and do
-#     not support hardware RDMA.
+# rdma_enabled = false: single-node lab NICs are virtual Hyper-V adapters,
+# no hardware RDMA support.
 # ---------------------------------------------------------------------------
 
-# The portal ARM template uses a single adapter (MGMT1) with a Compute_Management
-# intent and no storage network (managementComputeOnly / singleServerDeployment pattern).
-# The AVM module requires at least one entry in storage_networks to produce a converged
-# intent (converged = true when storage_adapters == management_adapters). With an empty
-# list the module generates two separate intents where the storage intent has zero
-# adapters, which fails Azure Local schema validation.
-# Workaround: keep MGMT1 in storage_networks to force converged = true, then override
-# traffic_type and intent_name below to match the portal's single-intent pattern.
 management_adapters             = ["MGMT1"]
 rdma_enabled                    = false
 storage_connectivity_switchless = true
+
+# MGMT1 listed in storage_networks to force converged intent (management +
+# compute on the same adapter). Matches portal's managementComputeOnly pattern.
 storage_networks = [
   { name = "MGMT1", networkAdapterName = "MGMT1", vlanId = "711" }
 ]
@@ -170,31 +151,39 @@ storage_networks = [
 intent_name  = "Compute_Management"
 traffic_type = ["Compute", "Management"]
 
-# Networking type and pattern, present in the QuickStart ARM template but rejected
-# by the live API (ObjectAdditionalProperties). Set to "" to omit from the payload.
+# Networking type and pattern — rejected by the live API (ObjectAdditionalProperties).
+# Set to "" to omit from the payload.
 networking_type    = ""
 networking_pattern = ""
 
-# Set to true when a previous terraform apply created deploymentSettings in Azure
-# but timed out before saving state (e.g. "context deadline exceeded").
-# Set to false on a fresh environment where deploymentSettings does not yet exist.
+# ---------------------------------------------------------------------------
+# Import helpers
+#
+# Use these when a previous terraform apply created resources in Azure but
+# the state was lost before saving (e.g. context deadline exceeded).
+# Reset to false / {} after a successful apply.
+# ---------------------------------------------------------------------------
+
+# Set to true when deploymentSettings/default already exists in Azure.
 import_deployment_settings = false
 
-# Populate with the role assignment GUIDs from a 409 RoleAssignmentExists error
-# when a previous apply created these but the state was lost before saving.
+# Populate with the role assignment GUIDs from a 409 RoleAssignmentExists error.
 # Keys: "<SERVER>_DMR" and "<SERVER>_INFRA". Values: GUIDs from the error output.
-# Reset to {} after a successful apply.
 import_machine_rg_role_assignment_ids = {}
 
-
 # ---------------------------------------------------------------------------
-# Deployment mode — see deployment flow at the top of this file
+# Deployment mode — see flow at the top of this file
 #
-# true  = Deploy   (default, recommended)
-# false = Validate only (optional, to check configuration before deploying)
+# false = Validate (Stage 1, start here)
+# true  = Deploy   (Stage 2, change after successful validation)
 # ---------------------------------------------------------------------------
 
-is_exported = true
+is_exported = false
+
+# Set to true only after a successful full deployment (all steps completed).
+# Keep false while deploying or retrying — arcbridge and customlocation
+# do not exist until all deployment steps have succeeded.
+deployment_completed = false
 
 # ---------------------------------------------------------------------------
 # Deployment options
@@ -209,9 +198,8 @@ enable_telemetry          = true
 credential_guard_enforced = true
 
 # Observability — set to true for EU-region deployments.
-eu_location = true
+eu_location = false
 
 # Quorum witness — the portal ARM template uses no witness for single-node.
-# The AVM module still passes cloudAccountName to the API (module limitation)
-# but witnessType = "" means Azure will not use it for quorum.
+# witnessType = "" means Azure will not use it for quorum.
 witness_type = ""

@@ -409,7 +409,7 @@ Key variable to adjust: `$LocalUser` (the local user account on the target VM; d
 
 ## Terraform Deployment
 
-> **Proof of concept - validated end-to-end.** The Terraform path has been successfully used to complete a full Azure Local deployment in a single `terraform apply` on this lab configuration and serves as a supported alternative to the Azure portal wizard. It is included here to validate the IaC approach alongside the PowerShell scripts. When the implementation reaches a stable state, it will be extracted to a **dedicated repository** with a proper operational framework: remote state backend, modular pipeline structure, and full Day-2 lifecycle coverage.
+> **Proof of concept - validated end-to-end.** The Terraform path has been successfully used to complete a full Azure Local deployment on this lab configuration and serves as a supported alternative to the Azure portal wizard. The current recommended workflow is a **two-stage deployment**: first `Validate` (`is_exported = false`), then `Deploy` (`is_exported = true`). It is included here to validate the IaC approach alongside the PowerShell scripts. When the implementation reaches a stable state, it will be extracted to a **dedicated repository** with a proper operational framework: remote state backend, modular pipeline structure, and full Day-2 lifecycle coverage.
 
 The `terraform/` folder contains an Infrastructure-as-Code deployment for the Azure Local cluster. It is a direct alternative to clicking through the Azure portal after Arc registration completes.
 
@@ -429,9 +429,18 @@ Terraform creates the following resources directly (before the local module runs
 The local module (`modules/azurelocal/`) then creates and wires together:
 
 - Azure Local cluster resource (`Microsoft.AzureStackHCI/clusters`)
-- Arc settings and Arc extensions
-- Custom location and resource bridge
 - All required RBAC role assignments
+- `edgeDevices` registration for each Arc node
+- Deployment settings validation / deployment resources
+- Arc extensions during the validate stage
+
+After the full deployment succeeds, the module can also read and expose post-deployment resources such as:
+
+- Arc settings
+- Custom location
+- Arc resource bridge
+
+Those post-deployment reads are intentionally skipped until `deployment_completed = true` so that `plan` and `apply` do not fail while Azure is still creating them.
 
 ### Prerequisites for Terraform
 
@@ -477,16 +486,30 @@ To address this, the upstream module was forked into `terraform/modules/azureloc
 | `locals.tf` | `host_network`: `networkingType` and `networkingPattern` added conditionally via `merge()` when non-empty; `enableStorageAutoIp` uses `var.enable_storage_auto_ip`; `infrastructure_network.useDhcp` uses `var.use_dhcp`; `observability` fields use variables instead of hardcoded `true` |
 | `variables.tf` | Six new variables: `networking_type`, `networking_pattern`, `use_dhcp`, `enable_storage_auto_ip`, `streaming_data_client`, `episodic_data_upload` |
 
-All other module files are identical to the upstream version. The fork is intentionally minimal, it tracks only the changes required to match the portal's single-node deployment pattern and does not alter module logic, provider requirements or outputs.
+The fork now also includes reliability and cleanup changes based on real lab runs:
 
-**Lab values set in `terraform.tfvars`:**
+- `edgeDevices` registration uses `azapi_resource_action` and is explicitly ordered after the required RBAC assignments.
+- `create_hci_rp_role_assignments` now defaults to `true` because the Microsoft.AzureStackHCI resource provider SPN needs the `Azure Connected Machine Resource Manager` role before Arc extensions can be installed.
+- Post-deployment Arc reads (`arc_settings`, `arcbridge`, `customlocation`) are guarded by `deployment_completed`, and their outputs return `null` until those resources really exist.
+- The cluster resource no longer carries an unnecessary direct dependency on `edgeDevices`; the dependency chain is now kept where it matters, on validation and deployment.
+- Older Arc-related lookup and recovery behaviour has been cleaned up so Terraform no longer tries to read post-deployment Arc resources too early during validate, retry, import or recovery scenarios.
+
+The fork remains intentionally minimal, but it is no longer just an API-version bump. It now includes the small set of functional changes needed to match the portal's single-node deployment pattern and to make the Terraform flow resilient in this lab.
+
+**Current lab values set in `terraform.tfvars.example`:**
 
 ```hcl
-networking_type    = "singleServerDeployment"
-networking_pattern = "managementComputeOnly"
+management_adapters = ["MGMT1"]
+storage_networks = [
+  { name = "MGMT1", networkAdapterName = "MGMT1", vlanId = "711" }
+]
+networking_type      = ""
+networking_pattern   = ""
+is_exported          = false
+deployment_completed = false
 ```
 
-Set either value to `""` to omit the field from the API payload and fall back to the behaviour of the upstream module.
+This reflects the current single-node lab defaults and the staged deployment flow documented in `terraform/terraform.tfvars.example`.
 
 ### Configuration
 
@@ -549,30 +572,40 @@ Terraform reads the `ARM_*` environment variables automatically. No changes to `
 
 ### Deployment
 
-The deployment mode is controlled by the `is_exported` variable. **A single `terraform apply` with `is_exported = true` is sufficient** - Azure Local validates the configuration internally before starting the full provisioning, so no separate validate stage is needed.
+The deployment mode is controlled by the `is_exported` variable. The current recommended workflow is the same one documented in `terraform/terraform.tfvars.example`: **run Terraform in two stages**.
 
 ```powershell
 cd terraform
 
 terraform init
+terraform apply
+```
+
+**Stage 1 - Validate** (`is_exported = false`, default)
+
+Terraform creates the Key Vault and storage account, assigns the required roles, registers `edgeDevices`, stores secrets, and submits the deployment settings with `deploymentMode = "Validate"`. Azure validates the configuration without starting the full provisioning.
+
+```powershell
 terraform plan
 terraform apply
 ```
 
-Terraform creates the Key Vault and storage account, registers the edge device, assigns roles, stores secrets, and submits the deployment settings with `deploymentMode = "Deploy"`. Azure runs an internal validation before provisioning the cluster (~30-60 minutes total). Monitor progress in the Azure portal under the resource group.
+Review the result in the Azure portal. Once validation succeeds, switch to Deploy.
 
-**Optional: validate-only run** (`is_exported = false`)
+**Stage 2 - Deploy** (`is_exported = true`)
 
-If you want to surface configuration errors before committing to a full deployment, set `is_exported = false` in `terraform.tfvars` and run `terraform apply`. Azure validates the settings and reports any issues (~10 minutes) without starting provisioning. Once satisfied, change to `is_exported = true` and run `terraform apply` again.
+Change `is_exported` in `terraform.tfvars` and run:
 
 ```powershell
 terraform plan   # confirm only the deployment mode changes from Validate to Deploy
 terraform apply
 ```
 
+This updates the deployment mode from `Validate` to `Deploy` and starts the full cluster provisioning.
+
 ### Recovering from a partial apply
 
-Long-running operations (validation ~10 min, full deployment ~30-60 min) can time out or lose state before Terraform saves the result. Two variables handle the most common recovery scenarios.
+Long-running operations can time out or lose state before Terraform saves the result. Several variables handle the most common recovery scenarios.
 
 **`import_deployment_settings`** (bool, default `false`)
 
@@ -597,6 +630,14 @@ import_machine_rg_role_assignment_ids = {
 
 Reset to `{}` after a successful apply.
 
+**`deployment_completed`** (bool, default `false`)
+
+Keep this at `false` while validation, deployment or retries are still in progress. Set it to `true` only after the full deployment has finished successfully. This enables post-deployment reads for resources such as `arcbridge`, `customlocation` and `arc_settings`.
+
+**`enable_cluster_module`** (bool, default `true`)
+
+Set this to `false` before `terraform destroy` if the Arc node was manually deleted from Azure. This skips the cluster module and avoids failed Arc machine lookups during destroy.
+
 ### RDMA
 
 `rdma_enabled` is set to `false` for this single-node lab. There is no cross-node storage traffic (switchless storage) and the NICs (`MGMT1`, `MGMT2`) are virtual adapters in a nested Hyper-V VM that do not support hardware RDMA. Setting this to `false` disables RDMA in all three network intents (management, compute and storage).
@@ -605,7 +646,7 @@ Reset to `{}` after a successful apply.
 
 - `terraform.tfvars` is listed in `.gitignore`. Never commit the populated file.
 - BitLocker is disabled by default (`bitlocker_boot_volume = false`, `bitlocker_data_volumes = false`) because the lab uses thin-provisioned VHDX disks in a nested VM without a hardware TPM chain.
-- The default lab credentials (`dgemsc#utquMHDHp3M`) in the example file are intentional lab defaults. Replace them before running.
+- `terraform.tfvars.example` now uses placeholder values for sensitive secrets (`TODO-change-me`, `TODO-your-spn-client-secret`). Replace them before running.
 - On `terraform destroy`, the provider purges the Key Vault immediately (`purge_soft_delete_on_destroy = true`) so the same name can be reused on the next deployment.
 - `resource_provider_registrations = "none"` is set in `providers.tf`. Terraform's azurerm provider would otherwise attempt to auto-register dozens of unrelated providers (ContainerInstance, Databricks, EventGrid...) at subscription scope, requiring `*/register/action` permission. All providers needed for Azure Local are already registered by `00_AzurePreRequisites.ps1`, so this is both safe and avoids over-privileging the SPN.
 - **Secret rotation**: the client secret generated by `00_AzurePreRequisites.ps1` is valid for 2 years. Rotate it before it expires to avoid service disruptions. Follow the [ARB Service Principal secret rotation procedure](https://github.com/MicrosoftDocs/azure-stack-docs/blob/main/azure-local/manage/manage-secrets-rotation.md#change-arb-service-principal-secret) and update `service_principal_secret` in `terraform.tfvars` (and the `$SPNSecret` variable in any script that uses it) with the new value.
@@ -687,8 +728,7 @@ At minimum, open and adjust:
 #   Start the AZLN01 VM manually first, wait for Windows Setup to finish, then run:
 .\scripts\01Lab\02_Cluster.ps1
 
-# Required ONLY if deploying with Terraform (not needed for portal wizard deployments)
-# Run this BEFORE terraform apply to pre-stage the mandatory Arc extensions on AZLN01
+# Optional troubleshooting only; no longer required before Terraform deployment
 # .\scripts\01Lab\03_TroubleshootingExtensions.ps1
 ```
 
@@ -706,7 +746,11 @@ notepad terraform.tfvars
 # Initialise providers and module
 terraform init
 
-# Deploy in a single apply (is_exported = true, the default)
+# Stage 1: validate (default in terraform.tfvars.example)
+terraform plan
+terraform apply
+
+# Stage 2: after validation succeeds, change is_exported = true
 terraform plan
 terraform apply
 ```
@@ -755,7 +799,7 @@ See the [Terraform Deployment](#terraform-deployment) section below for full det
 
 ## Safety and Security Notes
 
-- **Hardcoded credentials**: the default passwords (`Start#1234`, `dgemsc#utquMHDHp3M`) are intentional lab defaults. Change them before running and never commit real credentials.
+- **Hardcoded credentials**: some PowerShell scripts still contain intentional lab defaults such as `Start#1234` and `dgemsc#utquMHDHp3M`. In Terraform, `terraform.tfvars.example` now uses placeholder secrets (`TODO-change-me`, `TODO-your-spn-client-secret`) instead. Review and replace every credential before running and never commit real secrets.
 - **Host-level changes**: the scripts create a Hyper-V vSwitch, a NAT object and firewall rules on the host. Verify the `172.19.18.0/24` subnet does not conflict with your environment.
 - **Offboarding is destructive**: `99_Offboarding.ps1` deletes VMs, VHDs, network objects and the entire lab folder without further prompting. Review the script and the variables before executing.
 - **Azure costs**: managed disks are created temporarily during image download and deleted immediately after. Verify no orphaned disks remain in your resource group if a script is interrupted.

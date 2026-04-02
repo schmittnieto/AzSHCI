@@ -6,6 +6,52 @@ necessary, and **where** the change lives.
 
 ---
 
+## 2026-04-02 - Document staged deployment defaults; require RBAC before `edgeDevices`
+
+### terraform/README.md + terraform/terraform.tfvars.example: Current lab flow and sample values documented
+
+**Problem**: The Terraform folder had no dedicated README and the current sample configuration
+had drifted away from earlier documentation. The example file now starts in Validate mode,
+uses placeholder secrets instead of committed lab passwords, and documents the single-node
+MGMT1-only converged networking pattern, but those expectations were not captured in one
+Terraform-focused document.
+
+**Fix**: Added `terraform/README.md` and aligned the documentation with the current
+`terraform.tfvars.example` behaviour:
+
+- staged deployment flow (`is_exported = false` first, then `true`)
+- `deployment_completed = false` until the full deployment succeeds
+- MGMT1-only single-node networking sample (`management_adapters = ["MGMT1"]`)
+- converged intent workaround via `storage_networks = [{ ... MGMT1 ... }]`
+- placeholder credentials / secrets (`TODO-*`)
+- `witness_type = ""`, `networking_type = ""`, `networking_pattern = ""`
+- recovery helpers (`import_deployment_settings`, `import_machine_rg_role_assignment_ids`)
+
+This makes the Terraform folder self-contained and matches the values users actually copy
+from the example file.
+
+---
+
+### modules/azurelocal/edgedevices.tf + modules/azurelocal/variables.tf: Enforce role-assignment order before node registration
+
+**Problem**: `edgeDevices` registration was not explicitly ordered after the required RBAC
+resources, and the resource provider SPN role assignment remained opt-in even though Arc
+extension installation depends on it.
+
+**Fix**:
+
+- Added `depends_on` to `azapi_resource_action.edge_device` so registration happens only
+  after `service_principal_role_assign` and `machine_rg_role_assign` exist.
+- Changed `create_hci_rp_role_assignments` default from `false` to `true`.
+- Clarified the variable description: the `Azure Connected Machine Resource Manager` role on
+  the Microsoft.AzureStackHCI resource provider SPN is required before Arc extensions can
+  be installed.
+
+**Impact**: Fresh deployments now follow a safer dependency order closer to the portal/ARM
+sequence: role assignments -> `edgeDevices` -> `deploymentSettings`.
+
+---
+
 ## 2026-04-02 - Guard `arc_settings` data source; import block for machine RG role assignments
 
 ### modules/azurelocal/main.tf + outputs.tf: `arc_settings` data source made conditional

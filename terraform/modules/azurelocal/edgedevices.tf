@@ -1,17 +1,16 @@
-# Creates Microsoft.AzureStackHCI/edgeDevices scoped to each Arc machine.
-# This resource registers each node with the HCI edge management system and
-# enables the LcmController's EdgeArmClient to communicate with ARM during
-# deployment settings validation and deployment.
+# Registers each Arc node with the Azure Stack HCI edge management system.
+# Required before the LcmController extension can communicate with ARM
+# during deployment settings validation and deployment.
 #
-# The ARM template (azure-quickstart-templates) creates edgeDevices BEFORE the
-# cluster resource. Without this registration, the LcmController on the node
-# cannot download deployment settings and reports "not reachable".
+# The ARM quickstart template creates edgeDevices BEFORE the cluster resource.
+# Without this registration, the LcmController on the node cannot download
+# deployment settings and reports "not reachable".
 #
-# Uses azapi_resource_action (fire-and-forget PUT) instead of azapi_resource
-# because the Azure API does not support deleting edgeDevices on physical
-# Arc-registered nodes. The DELETE call hangs indefinitely. With
-# azapi_resource_action, Terraform does not attempt a DELETE on destroy - it
-# simply drops the entry from state.
+# Uses azapi_resource_action (fire-and-forget PUT) because the Azure API
+# does not support deleting edgeDevices on physical Arc-registered nodes.
+# On destroy, Terraform simply removes the entry from state.
+#
+# Portal wizard order: role assignments → edgeDevices → extensions → deploymentSettings
 
 resource "azapi_resource_action" "edge_device" {
   for_each = data.azurerm_arc_machine.arcservers
@@ -24,4 +23,9 @@ resource "azapi_resource_action" "edge_device" {
     kind       = "HCI"
     properties = {}
   }
+
+  depends_on = [
+    azurerm_role_assignment.service_principal_role_assign,
+    azurerm_role_assignment.machine_rg_role_assign,
+  ]
 }

@@ -49,7 +49,6 @@ resource "azapi_resource" "cluster" {
 
   depends_on = [
     azurerm_role_assignment.service_principal_role_assign,
-    azapi_resource_action.edge_device,
   ]
 
   lifecycle {

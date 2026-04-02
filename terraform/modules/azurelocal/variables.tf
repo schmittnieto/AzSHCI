@@ -247,8 +247,8 @@ variable "configuration_mode" {
 
 variable "create_hci_rp_role_assignments" {
   type        = bool
-  default     = false
-  description = "Indicates whether to create role assignments for the HCI resource provider service principal."
+  default     = true
+  description = "Indicates whether to create role assignments for the HCI resource provider service principal. Must be true — the Azure Connected Machine Resource Manager role on the resource provider SPN is required before Arc extensions can be installed."
 }
 
 variable "create_key_vault" {
