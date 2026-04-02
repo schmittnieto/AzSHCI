@@ -1,4 +1,4 @@
-# Terraform – Azure Local Deployment Changelog
+# Terraform - Azure Local Deployment Changelog
 
 All significant changes to the Terraform configuration are documented here,
 ordered newest-first. Each entry records **what** changed, **why** it was
@@ -6,9 +6,183 @@ necessary, and **where** the change lives.
 
 ---
 
-## 2026-03-27 — Conditional post-deployment data sources; fix deprecated keyvault argument; remove redundant ignore_changes
+## 2026-04-02 - Guard `arc_settings` data source; import block for machine RG role assignments
 
-### modules/azurelocal/main.tf — `arcbridge` and `customlocation` data sources made conditional
+### modules/azurelocal/main.tf + outputs.tf: `arc_settings` data source made conditional
+
+**Problem**: `data.azapi_resource.arc_settings` had no `count` guard. Terraform always
+evaluates data sources at plan/apply time regardless of `depends_on`, so during any
+operation before a full deployment completes (validate stage, partial apply recovery,
+`terraform import`) the read failed with `Resource not found` because the
+`Microsoft.AzureStackHCI/clusters/ArcSettings/default` resource is only created by the
+Azure deployment engine after all deployment steps succeed.
+
+**Fix**: Added `count = var.deployment_completed ? 1 : 0` to the data source, matching
+the existing pattern on `arcbridge` and `customlocation`. Updated `outputs.tf` to return
+`null` when `deployment_completed = false`, consistent with the `arcbridge` and
+`customlocation` outputs.
+
+---
+
+### terraform/main.tf + variables.tf + terraform.tfvars.example: Import block for machine RG role assignments
+
+**Problem**: `azurerm_role_assignment.machine_rg_role_assign` resources (keys `<SERVER>_DMR`
+and `<SERVER>_INFRA`) are scoped to the resource group, not to any randomly-suffixed
+resource (Key Vault, storage account). If Terraform state is lost after a successful apply,
+these role assignments remain in Azure and the next `terraform apply` fails with:
+
+```
+Error: unexpected status 409 (409 Conflict) with error: RoleAssignmentExists:
+The role assignment already exists. The ID of the existing role assignment is <guid>.
+```
+
+The provider does not handle 409 on role assignments gracefully; it has no built-in
+"adopt if exists" behaviour. The only recovery path is to import the existing assignments
+into state before the next apply.
+
+**Fix**: Added a `for_each` import block in `terraform/main.tf` controlled by the new
+`import_machine_rg_role_assignment_ids` variable (default `{}`). Follows the same
+pattern as the existing `import_deployment_settings` import block.
+
+**Usage**: Copy the GUIDs from the 409 error message (shown as
+`The ID of the existing role assignment is <guid>`) into `terraform.tfvars`:
+
+```hcl
+import_machine_rg_role_assignment_ids = {
+  "AZLN01_DMR"   = "db214d43-5a4d-f471-dcbb-0b9fc086dd66"
+  "AZLN01_INFRA" = "3a405fd3-3175-685e-dc90-97e842c69f16"
+}
+```
+
+Run `terraform apply`, then reset to `{}`.
+
+**Files changed**:
+- `terraform/variables.tf`: new `import_machine_rg_role_assignment_ids` map variable.
+- `terraform/main.tf`: new `import` block using the variable.
+- `terraform/terraform.tfvars.example`: entry with empty map default.
+
+---
+
+## 2026-04-02 - Fix endingAddress drift triggering unnecessary re-validation on Stage 2
+
+### terraform/terraform.tfvars + terraform.tfvars.example: `ending_address` corrected to `172.19.18.30`
+
+**Problem**: Stage 1 (`is_exported = false`) sent `endingAddress = "172.19.18.26"` to the Azure API.
+Azure normalised the IP pool to a minimum of 11 addresses and internally stored
+`endingAddress = "172.19.18.30"`. When Stage 2 (`is_exported = true`) ran, Terraform detected this
+drift (`172.19.18.30 → 172.19.18.26`) and issued a PUT update to `validatedeploymentsetting`.
+The update triggered a full re-validation (~30 minutes) before `deploymentsetting` could PATCH
+`deploymentMode = "Deploy"`.
+
+**Root cause**: The IP range had been intentionally widened between Stage 1 and Stage 2.
+Azure Local requires ~6 infrastructure IPs for single-node; this lab reserves 10 (`.20`→`.30`)
+to simplify the deployment. The tfvars was updated to `.30` only for Stage 2, causing drift.
+
+**Fix**: Changed `ending_address` from `"172.19.18.26"` to `"172.19.18.30"` in both
+`terraform.tfvars` and `terraform.tfvars.example`. Both stages now use the same value from the
+start, eliminating drift and the unnecessary re-validation on Stage 2 and subsequent applies.
+
+---
+
+## 2026-04-02 - Extensions installed automatically during Terraform validate stage
+
+### Arc extensions no longer require manual pre-staging
+
+**Finding**: A successful end-to-end validation confirmed that the four required Azure Connected
+Machine extensions (`AzureEdgeTelemetryAndDiagnostics`, `AzureEdgeDeviceManagement`,
+`AzureEdgeLifecycleManager`, `AzureEdgeRemoteSupport`) are now installed automatically on the
+Arc node during the first `terraform apply` (validate stage — `validatedeploymentsetting`
+resource). No manual pre-staging step is needed before running Terraform.
+
+**Impact**:
+- `scripts/01Lab/03_TroubleshootingExtensions.ps1` is **no longer required** as a pre-requisite
+  before `terraform apply`. The script remains available for troubleshooting environments where
+  extensions are in a `Failed` state or need to be reconciled outside of Terraform.
+- The README has been updated accordingly: the script section now describes it as an
+  optional troubleshooting tool rather than a required pre-step.
+
+---
+
+## 2026-04-01 - Confirmed root cause + automated node hotfix via Arc Run Command
+
+### Root cause confirmed: `GetTargetBuildManifest` bug in `DownloadHelpers.psm1`
+
+**Summary**: The `UpdateDeploymentSettingsDataFailed` / empty-URL error was traced to a bug in
+`Microsoft.AzureStack.Role.Deployment.Service.10.2601.0.1162` installed on the node by the
+`AzureEdgeLifecycleManager` Arc extension. The node-side `0.settings` nulling workaround
+documented in the 2026-03-27 "Real root cause" entry addressed the symptom; this entry documents
+the confirmed code-level root cause and a proper fix applied via Arc Run Command.
+
+**Root cause** `DownloadHelpers.psm1`, function `GetTargetBuildManifest` (line 335):
+
+```powershell
+# Bug: $assemblyPayload is a non-null PSCustomObject {CloudName, DeviceType, RegionName}
+# [string]::IsNullOrEmpty(object) calls .ToString() → non-empty string → returns $false
+# → cloud manifest fallback never activates → 4 empty URLs → BITS error
+if ([string]::IsNullOrEmpty($assemblyPayload)) {
+```
+
+When `terraform apply` creates the `deploymentSettings` resource, Azure writes only minimal
+`publicSettings` to the LcmController RuntimeSettings file (`0.settings`):
+
+```json
+{"runtimeSettings":[{"handlerSettings":{"publicSettings":{"CloudName":"AzureCloud","DeviceType":"AzureEdge","RegionName":"westeurope"}}}]}
+```
+
+`FetchSpecificBuildNumber` (line 315) reads this file, assigns the `publicSettings` PSCustomObject
+to `$assemblyPayload`, and returns it. The object is non-null but has no `AssemblyDeployPackage`
+or `Payload`, it is just the cloud identity markers.
+
+`GetTargetBuildManifest` was supposed to detect this and use the cloud manifest fallback
+(downloading from `https://aka.ms/AzureStackHCI/CloudDeploymentManifest`), but `[string]::IsNullOrEmpty()`
+returns `$false` for any non-null object. The code enters the `else` branch, reads
+`$assemblyPayload.Payload` (which is `$null`), and produces four empty URLs.
+
+**Fix** patch line 335 of `DownloadHelpers.psm1` on the node:
+
+```powershell
+# Fixed: also check that AssemblyDeployPackage is populated before taking the specific-build path
+if ([string]::IsNullOrEmpty($assemblyPayload) -or [string]::IsNullOrEmpty($assemblyPayload.AssemblyDeployPackage)) {
+```
+
+This makes the fallback activate whenever `publicSettings` exists but does not carry a valid
+`AssemblyDeployPackage`, which is exactly the case for the minimal settings Azure pushes.
+After the fix the node downloads the cloud manifest, retrieves the correct package URLs and
+proceeds with the deployment validation.
+
+---
+
+### scripts/01Lab/03_TroubleshootingExtensions.ps1: New Step 11, LcmController NuGet hotfix via Arc Run Command
+
+**Problem**: Applying the patch above required manual RDP/SSH access to the node, contradicting
+the goal of a fully automated deployment where the node is not touched after Arc registration.
+
+**Fix**: Added Step 11 to `03_TroubleshootingExtensions.ps1`. The new step uses
+**Azure Arc Run Command** (`Microsoft.HybridCompute/machines/runCommands`, API
+`2024-07-31-preview`) to deliver the patch to the node through the Arc agent, no direct
+network path to the node is required. `asyncExecution = false` means the PUT operation waits
+for script completion and returns stdout/stderr inline.
+
+The script delivered via Arc Run Command:
+1. Checks that the affected NuGet package (`10.2601.0.1162`) is present at the expected path.
+2. Verifies whether the patch has already been applied (idempotent).
+3. Applies the one-line fix to `DownloadHelpers.psm1`.
+4. Restarts the `LcmController` Windows service so the patched module is reloaded from disk.
+
+From this point, running `03_TroubleshootingExtensions.ps1` after Arc registration and before
+`terraform apply` is sufficient to prepare the node for a fully automated, zero-touch Terraform
+deployment.
+
+> **Note**: This bug is in the `10.2601.0.1162` build of
+> `Microsoft.AzureStack.Role.Deployment.Service`. If Microsoft releases a newer build of the
+> `AzureEdgeLifecycleManager` extension that ships a fixed NuGet version, the patch step can
+> be removed and the extension version pin in `$ExtensionList` updated accordingly.
+
+---
+
+## 2026-03-27 - Conditional post-deployment data sources; fix deprecated keyvault argument; remove redundant ignore_changes
+
+### modules/azurelocal/main.tf: `arcbridge` and `customlocation` data sources made conditional
 
 **Problem**: `data.azapi_resource.arcbridge` and `data.azapi_resource.customlocation` are
 unconditional in the AVM module. Terraform always reads data sources at plan time, regardless
@@ -34,7 +208,7 @@ Also updated:
 
 ---
 
-### modules/azurelocal/keyvault.tf — Fix deprecated `enable_rbac_authorization`
+### modules/azurelocal/keyvault.tf: Fix deprecated `enable_rbac_authorization`
 
 **Problem**: The azurerm provider renamed `enable_rbac_authorization` to
 `rbac_authorization_enabled`. The old name still works but produces a deprecation
@@ -44,10 +218,10 @@ warning on every plan/apply and will be removed in provider v5.0.
 
 ---
 
-### modules/azurelocal/validate.tf — Remove redundant `output` from `ignore_changes`
+### modules/azurelocal/validate.tf: Remove redundant `output` from `ignore_changes`
 
 **Problem**: The azapi provider warned that including `output` in `lifecycle.ignore_changes`
-has no effect — `output` is a provider-decided computed attribute that the `ignore_changes`
+has no effect - `output` is a provider-decided computed attribute that the `ignore_changes`
 mechanism does not cover.
 
 **Fix**: Removed `output` from `ignore_changes`. The remaining entry
@@ -55,9 +229,9 @@ mechanism does not cover.
 
 ---
 
-## 2026-03-27 — Fix inverted `count` in deploymentsetting (full deployment triggered on validate stage)
+## 2026-03-27 - Fix inverted `count` in deploymentsetting (full deployment triggered on validate stage)
 
-### modules/azurelocal/deploy.tf — `count` condition corrected
+### modules/azurelocal/deploy.tf: `count` condition corrected
 
 **Problem**: The `azapi_update_resource.deploymentsetting` resource had
 `count = var.is_exported ? 0 : 1`. In Terraform, `false ? 0 : 1 = 1`, so when
@@ -75,9 +249,9 @@ set `is_exported = true`.
 
 ---
 
-## 2026-03-27 — Ignore `output` on validatedeploymentsetting (azapi inconsistency bug)
+## 2026-03-27 - Ignore `output` on validatedeploymentsetting (azapi inconsistency bug)
 
-### modules/azurelocal/validate.tf — `ignore_changes = [output]`
+### modules/azurelocal/validate.tf: `ignore_changes = [output]`
 
 **Problem**: After importing `deploymentSettings/default` with state from a previous
 run and then applying body changes (sbePartnerInfo, API version), Azure re-ran
@@ -100,9 +274,9 @@ Terraform state.
 
 ---
 
-## 2026-03-27 — Import block for existing deploymentSettings (post-timeout recovery)
+## 2026-03-27 - Import block for existing deploymentSettings (post-timeout recovery)
 
-### terraform/main.tf — Conditional import block for deploymentSettings
+### terraform/main.tf: Conditional import block for deploymentSettings
 
 **Problem**: After the previous `terraform apply` hit `context deadline exceeded`
 at ~29 minutes, the `deploymentSettings/default` resource was left in Azure but
@@ -117,21 +291,21 @@ into state before the plan phase, preventing the "already exists" error.
 Set `import_deployment_settings = false` on a completely fresh environment where
 no prior `terraform apply` has reached the `deploymentSettings` creation step.
 
-### terraform/variables.tf — `import_deployment_settings` variable
+### terraform/variables.tf: `import_deployment_settings` variable
 
 New `bool` variable, default `false`, documented with the same pattern as
 `import_edge_devices`.
 
-### terraform/terraform.tfvars — `import_deployment_settings = true`
+### terraform/terraform.tfvars: `import_deployment_settings = true`
 
 Set to `true` for the current environment (deploymentSettings already exists in
 Azure from the previous timed-out apply).
 
 ---
 
-## 2026-03-27 — Explicit timeouts on validatedeploymentsetting and deploymentsetting
+## 2026-03-27 - Explicit timeouts on validatedeploymentsetting and deploymentsetting
 
-### modules/azurelocal/validate.tf — `timeouts` block on `validatedeploymentsetting`
+### modules/azurelocal/validate.tf: `timeouts` block on `validatedeploymentsetting`
 
 **Problem**: No explicit timeout. The full environment validation
 (`EnvironmentValidatorFull`, ~10 steps) takes 30-60 minutes. The azapi provider's
@@ -143,7 +317,7 @@ before the cut-off).
 
 ---
 
-### modules/azurelocal/deploy.tf — Add `update` timeout to `deploymentsetting`
+### modules/azurelocal/deploy.tf: Add `update` timeout to `deploymentsetting`
 
 **Problem**: The existing `timeouts` block only declared `create = "24h"` and
 `delete = "60m"`. If Terraform triggers an update on this resource (e.g. on
@@ -155,29 +329,13 @@ during the Deploy stage has the same headroom.
 
 ---
 
-## 2026-03-27 — Add 2h timeout to validatedeploymentsetting
+## 2026-03-27 - Real root cause of empty download URLs; API version rollback to 2025-09-15-preview
 
-### modules/azurelocal/validate.tf — `timeouts` block
-
-**Problem**: The `azapi_resource.validatedeploymentsetting` resource had no explicit
-`timeouts` block. The full environment validation (`EnvironmentValidatorFull`) takes
-30-60 minutes. The azapi Terraform provider's default HTTP timeout is shorter,
-causing `context deadline exceeded` even though the Azure operation was progressing
-normally (steps 0-Connectivity and 1-ExternalAD both passed before the timeout).
-
-**Fix**: Added `timeouts { create = "2h"; update = "2h"; delete = "1h" }` to the
-`validatedeploymentsetting` resource so the provider waits long enough for the
-Azure long-running operation to complete.
-
----
-
-## 2026-03-27 — Real root cause of empty download URLs; API version rollback to 2025-09-15-preview
-
-### Node remediation — `0.settings` is the actual stale file (not `*.json`)
+### Node remediation: `0.settings` is the actual stale file (not `*.json`)
 
 **Problem**: All previous cleanup attempts used `Get-ChildItem -Filter "*.json"`, which
 matched nothing relevant. The LcmController Arc extension stores its runtime
-settings in `<version>\RuntimeSettings\0.settings` — a `.settings` file, not
+settings in `<version>\RuntimeSettings\0.settings` - a `.settings` file, not
 `.json`. This file was **never deleted** and has been causing every failure.
 
 `0.settings` on AZLN01 contains:
@@ -206,7 +364,7 @@ has `"publicSettings": null`.
 **Root-cause chain** (revised and definitive):
 1. `0.settings` was written once when the LcmController Arc extension was first
    enabled (sequence 0). Azure does **not** push new settings files during
-   `deploymentSettings` operations — confirmed by `state.json`
+   `deploymentSettings` operations - confirmed by `state.json`
    (`SequenceNumberFinished=0`) remaining unchanged across all applies.
 2. The file has a non-null `publicSettings` object (`CloudName`/`DeviceType`/
    `RegionName`) that never contains `AssemblyDeployPackage` or `Payload`.
@@ -214,7 +372,7 @@ has `"publicSettings": null`.
 4. `GetTargetBuildManifest` misidentifies it as a valid specific-build payload.
 5. Empty URLs → BITS error.
 
-**Fix** — run on **AZLN01** once, then re-run `terraform apply`:
+**Fix** - run on **AZLN01** once, then re-run `terraform apply`:
 
 ```powershell
 $lcmPath  = "C:\Packages\Plugins\Microsoft.AzureStack.Orchestration.LcmController"
@@ -226,7 +384,7 @@ $settingsFile = Join-Path $versionDir.FullName "RuntimeSettings\0.settings"
 # Confirm the problematic content
 Get-Content $settingsFile
 
-# Null out publicSettings — FetchSpecificBuildNumber will now return $null
+# Null out publicSettings: FetchSpecificBuildNumber will now return $null
 # → GetTargetBuildManifest uses cloud manifest path
 # → DownloadCloudManifestHelper downloads from https://aka.ms/AzureStackHCI/CloudDeploymentManifest
 Set-Content $settingsFile `
@@ -247,7 +405,7 @@ Azure will not overwrite this file during `deploymentSettings` processing
 
 ---
 
-### modules/azurelocal/validate.tf + deploy.tf + main.tf — Revert API version to `2025-09-15-preview`
+### modules/azurelocal/validate.tf + deploy.tf + main.tf: Revert API version to `2025-09-15-preview`
 
 **Problem**: All three resources were previously bumped to `2026-03-01-preview`.
 The ARM QuickStart template (`ARM/azuredeploy.json`) uses `2025-09-15-preview`
@@ -257,18 +415,26 @@ may change how the Azure control plane processes the request and what settings i
 pushes to the LcmController Arc extension.
 
 **Fix**: Reverted all three resource type strings back to `@2025-09-15-preview`:
-- `modules/azurelocal/validate.tf` — `validatedeploymentsetting`
-- `modules/azurelocal/deploy.tf` — `deploymentsetting`
-- `modules/azurelocal/main.tf` — `cluster`
+- `modules/azurelocal/validate.tf` - `validatedeploymentsetting`
+- `modules/azurelocal/deploy.tf` - `deploymentsetting`
+- `modules/azurelocal/main.tf` - `cluster`
 
 `schema_validation_enabled = false` on `validatedeploymentsetting` is retained
 (preview API, not in local provider schema cache).
 
 ---
 
-## 2026-03-27 — Add sbePartnerInfo; revert secretsLocation; node remediation guide
+## 2026-03-27 - Add sbePartnerInfo; revert secretsLocation; node remediation guide
 
-### modules/azurelocal/locals.tf — Add empty `sbePartnerInfo` to scaleUnit
+### modules/azurelocal/locals.tf: Add empty `sbePartnerInfo` to scaleUnit
+
+> **False root cause - superseded**: The root-cause chain below was incorrect.
+> The empty download URLs were caused by the stale `0.settings` file in the
+> LcmController RuntimeSettings directory, not by the absence of `sbePartnerInfo`.
+> See the "Real root cause" entry above for the confirmed analysis.
+> Adding `sbePartnerInfo` brings the payload structurally closer to the ARM
+> template and is retained as a defensive alignment fix, but it did not resolve
+> the download failure on its own.
 
 **Problem**: After deep-comparison of the ARM QuickStart template
 (`ARM/azuredeploy.json`) against our Terraform payload, one structural
@@ -277,13 +443,13 @@ difference was identified: the ARM template **always** sends a
 Solution Builder Extension (SBE) partner is involved (all fields are
 empty strings or null).
 
-Our Terraform was omitting `sbePartnerInfo` entirely.  The Azure
+Our Terraform was omitting `sbePartnerInfo` entirely. The Azure
 deployment control-plane appears to use the presence of this block to
 decide what settings to push to the node's
 `Microsoft.AzureStack.Orchestration.LcmController` Arc extension
 (`C:\Packages\Plugins\Microsoft.AzureStack.Orchestration.LcmController\`).
 
-**Root-cause chain**:
+**Root-cause chain** (incorrect - superseded by "Real root cause" entry above):
 1. `deploymentSettings` created → ARM processes → LcmController triggered.
 2. Azure writes extension settings to `{LcmController}\{ver}\RuntimeSettings\*.json`.
 3. Without `sbePartnerInfo`, Azure pushes a `publicSettings` object that
@@ -306,7 +472,7 @@ in `locals.tf`, matching the ARM template exactly.
 
 ---
 
-### terraform/main.tf — Revert spurious `secrets_location` parameter
+### terraform/main.tf: Revert spurious `secrets_location` parameter
 
 **Problem**: A previous attempt added
 `secrets_location = azurerm_key_vault.deployment_keyvault.vault_uri` to
@@ -325,7 +491,13 @@ the ARM template (new `secrets` model, no deprecated `secretsLocation`).
 
 ---
 
-### Node remediation — stale LcmController RuntimeSettings on AZLN01
+### Node remediation: stale LcmController RuntimeSettings on AZLN01
+
+> **Incorrect remediation - superseded**: The script below uses
+> `Get-ChildItem -Filter "*.json"` which does not match the actual problematic
+> file (`0.settings`). This approach found nothing and did not fix the failure.
+> Use the corrected remediation in the "Real root cause" entry above, which
+> targets `0.settings` directly and nulls out `publicSettings`.
 
 The above Terraform changes address the structural cause. However, AZLN01
 may already have stale `RuntimeSettings` files from previous failed
@@ -370,9 +542,9 @@ proceed with validation.
 
 ---
 
-## 2026-03-27 — Fix "Resource already exists" for edgeDevices
+## 2026-03-27 - Fix "Resource already exists" for edgeDevices
 
-### terraform/main.tf — Conditional import block for edgeDevices
+### terraform/main.tf: Conditional import block for edgeDevices
 
 **Problem**: `azapi_resource.edge_device["AZLN01"]` already existed in
 Azure (created by a prior portal/ARM deployment) and was not in Terraform
@@ -384,9 +556,9 @@ environments with no prior deployments set `import_edge_devices = false`.
 
 ---
 
-## 2026-03-27 — Random name suffix for Key Vault and Storage Account
+## 2026-03-27 - Random name suffix for Key Vault and Storage Account
 
-### terraform/main.tf — `random_integer` suffix
+### terraform/main.tf: `random_integer` suffix
 
 **Problem**: Key Vault and Storage Account names must be globally unique.
 Using a fixed name caused conflicts across deployments or after `destroy`.
@@ -398,9 +570,9 @@ runs.
 
 ---
 
-## 2026-03-27 — Root cause: UpdateDeploymentSettingsDataFailed
+## 2026-03-27 - Root cause: UpdateDeploymentSettingsDataFailed
 
-### modules/azurelocal/edgedevices.tf — New file
+### modules/azurelocal/edgedevices.tf: New file
 
 **Problem**: After deep-comparison of the ARM QuickStart template with
 our Terraform configuration, the `Microsoft.AzureStackHCI/edgeDevices`
@@ -417,7 +589,7 @@ resource that is also managed by the HCI control plane.
 
 ---
 
-### modules/azurelocal/rolebindings.tf — `machine_rg_role_assign`
+### modules/azurelocal/rolebindings.tf: `machine_rg_role_assign`
 
 **Problem**: The ARM QuickStart template assigns two roles to the Arc
 machine identity at resource-group scope that the upstream AVM module
@@ -432,13 +604,16 @@ was not creating:
 
 ---
 
-### modules/azurelocal/validate.tf — API version and depends_on
+### modules/azurelocal/validate.tf: API version and depends_on
 
 **Problem**: API version mismatch and missing dependencies.
 
+> **Note - partial rollback**: The API version was bumped here to `2026-03-01-preview`.
+> It was later reverted to `2025-09-15-preview` in the "Real root cause" entry above,
+> after the ARM QuickStart template confirmed `2025-09-15-preview` as the correct version.
+
 **Fix**:
-- Bumped API version to `2026-03-01-preview` (current default for the
-  `Microsoft.AzureStackHCI` resource provider).
+- Bumped API version to `2026-03-01-preview` (later reverted - see above).
 - Added `schema_validation_enabled = false` (preview API, not in local
   provider schema cache).
 - Expanded `depends_on` to include `edge_device` and both new role
@@ -449,14 +624,17 @@ was not creating:
 
 ### modules/azurelocal/main.tf (cluster resource)
 
-**Fix**: Bumped cluster API version to `2026-03-01-preview`; added
+> **Note - partial rollback**: The cluster API version was bumped to `2026-03-01-preview`
+> here and later reverted to `2025-09-15-preview` in the "Real root cause" entry above.
+
+**Fix**: Bumped cluster API version to `2026-03-01-preview` (later reverted); added
 `azapi_resource.edge_device` to its `depends_on`.
 
 ---
 
-## Earlier — networkingType / networkingPattern rejected by live API
+## Earlier - networkingType / networkingPattern rejected by live API
 
-### terraform/terraform.tfvars — Set both fields to `""`
+### terraform/terraform.tfvars: Set both fields to `""`
 
 **Problem**: API version `2025-09-15-preview` accepts `networkingType` and
 `networkingPattern` in its schema, but the live endpoint rejects them with
@@ -469,7 +647,7 @@ value is an empty string.
 
 ---
 
-## Earlier — schema_validation_enabled not supported on azapi_update_resource
+## Earlier - schema_validation_enabled not supported on azapi_update_resource
 
 ### modules/azurelocal/deploy.tf
 

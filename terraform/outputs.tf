@@ -1,6 +1,6 @@
 output "cluster_resource_id" {
   description = "Azure resource ID of the Azure Local cluster."
-  value       = module.azure_local_cluster.resource_id
+  value       = var.enable_cluster_module ? module.azure_local_cluster[0].resource_id : null
 }
 
 output "key_vault_id" {
@@ -20,5 +20,5 @@ output "witness_storage_account_id" {
 
 output "custom_location_id" {
   description = "Azure resource ID of the Arc custom location. null until deployment_completed = true."
-  value       = module.azure_local_cluster.customlocation != null ? module.azure_local_cluster.customlocation.id : null
+  value       = var.enable_cluster_module && module.azure_local_cluster[0].customlocation != null ? module.azure_local_cluster[0].customlocation.id : null
 }

@@ -25,6 +25,7 @@ data "azapi_resource_list" "user_storages" {
 }
 
 data "azapi_resource" "arc_settings" {
+  count     = var.deployment_completed ? 1 : 0
   type      = "Microsoft.AzureStackHCI/clusters/ArcSettings@2024-04-01"
   name      = "default"
   parent_id = azapi_resource.cluster.id
@@ -48,7 +49,7 @@ resource "azapi_resource" "cluster" {
 
   depends_on = [
     azurerm_role_assignment.service_principal_role_assign,
-    azapi_resource.edge_device,
+    azapi_resource_action.edge_device,
   ]
 
   lifecycle {

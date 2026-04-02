@@ -6,6 +6,14 @@
     Troubleshoots and manages Azure Connected Machine extensions for ARC VMs.
 
 .DESCRIPTION
+    NOTE (2026-04-02): As of the current Terraform configuration, the four required Arc extensions
+    (AzureEdgeTelemetryAndDiagnostics, AzureEdgeDeviceManagement, AzureEdgeLifecycleManager,
+    AzureEdgeRemoteSupport) are now installed automatically during the first Terraform apply
+    (validate stage / validatedeploymentsetting resource). This script is therefore NO LONGER
+    required as a pre-requisite step before running `terraform apply`.
+    It remains useful for troubleshooting environments where extensions are in a Failed state,
+    stuck at a wrong version, or need to be reconciled manually outside of Terraform.
+
     This script performs the following tasks:
     - Installs the Az.Compute, Az.StackHCI and Az.ConnectedMachine modules if not already installed.
     - Connects to Azure using one of three methods (see Authentication section below).
@@ -68,7 +76,7 @@ $ExtensionList = @(
 )
 
 # Total number of steps for progress calculation
-$totalSteps = 10
+$totalSteps = 11
 $currentStep = 0
 
 #endregion
@@ -595,6 +603,66 @@ try {
     }
 } catch {
     Write-Message "Could not verify extension provisioning state. Error: $_" -Type "Error"
+}
+
+# Step 11: Apply LcmController NuGet hotfix via Arc Run Command
+# Bug in Microsoft.AzureStack.Role.Deployment.Service 10.2601.x: GetTargetBuildManifest checks
+# [string]::IsNullOrEmpty($assemblyPayload) but $assemblyPayload is a non-null PSCustomObject
+# {CloudName, DeviceType, RegionName} when Azure pushes minimal publicSettings. The IsNullOrEmpty
+# check returns $false and the cloud manifest download fallback never activates, leaving all four
+# package download URLs empty. Fix: also check $assemblyPayload.AssemblyDeployPackage is non-empty.
+$currentStep++
+Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Applying LcmController NuGet hotfix via Arc Run Command..."
+Write-Message "Applying LcmController NuGet hotfix on '$($selectedARCVM.Name)'..." -Type "Info"
+try {
+    $patchScript = @'
+$pkgPath = "C:\NugetStore\Microsoft.AzureStack.Role.Deployment.Service.10.2601.0.1162\content\Classes\DeploymentService\Helpers\DownloadHelpers.psm1"
+if (-not (Test-Path $pkgPath)) {
+    Write-Output "NuGet package 10.2601.0.1162 not found at expected path - skipping patch"
+    exit 0
+}
+$content = Get-Content $pkgPath -Raw
+$old = 'if ([string]::IsNullOrEmpty($assemblyPayload)) {'
+$new = 'if ([string]::IsNullOrEmpty($assemblyPayload) -or [string]::IsNullOrEmpty($assemblyPayload.AssemblyDeployPackage)) {'
+if ($content -match [regex]::Escape($new)) {
+    Write-Output "Already patched - no action needed"
+    exit 0
+}
+if ($content -notmatch [regex]::Escape($old)) {
+    Write-Output "Target line not found in file - NuGet version may differ or file was already modified"
+    exit 0
+}
+$patched = $content -replace [regex]::Escape($old), $new
+Set-Content $pkgPath -Value $patched -NoNewline
+Restart-Service LcmController -Force -ErrorAction SilentlyContinue
+Write-Output "Patch applied and LcmController service restarted"
+'@
+
+    $runCommandBody = @{
+        location   = $Location
+        properties = @{
+            source           = @{ script = $patchScript }
+            asyncExecution   = $false
+            timeoutInSeconds = 120
+        }
+    } | ConvertTo-Json -Depth 5
+
+    $machineId = "/subscriptions/$SubscriptionID/resourceGroups/$ResourceGroupName/providers/Microsoft.HybridCompute/machines/$($selectedARCVM.Name)"
+    $uri = "https://management.azure.com$machineId/runCommands/PatchLcmNuget?api-version=2024-07-31-preview"
+
+    $response = Invoke-AzRestMethod -Method PUT -Uri $uri -Payload $runCommandBody -ErrorAction Stop
+    if ($response.StatusCode -in 200, 201) {
+        $result = $response.Content | ConvertFrom-Json
+        $output = $result.properties.instanceView.output
+        $err    = $result.properties.instanceView.error
+        if ($output) { Write-Message "[$($selectedARCVM.Name)] $output" -Type "Success" }
+        if ($err)    { Write-Message "[$($selectedARCVM.Name)] Run command error: $err" -Type "Warning" }
+    } else {
+        Write-Message "Arc Run Command returned HTTP $($response.StatusCode) — patch may need to be applied manually." -Type "Warning"
+        Write-Message $response.Content -Type "Warning"
+    }
+} catch {
+    Write-Message "Failed to apply LcmController NuGet hotfix via Arc Run Command. Error: $_" -Type "Warning"
 }
 
 # Complete the overall progress bar

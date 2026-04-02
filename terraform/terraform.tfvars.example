@@ -7,20 +7,30 @@
 # It is listed in .gitignore — never commit the populated file to source control.
 #
 # ---------------------------------------------------------------------------
-# TWO-STAGE DEPLOYMENT FLOW
+# DEPLOYMENT FLOW
 #
-# Stage 1 — Validate (is_exported = false)
+# Single apply (recommended, is_exported = true):
 #   terraform init
+#   terraform plan
 #   terraform apply
-#   Creates the Key Vault and witness storage account, then validates the
-#   Azure Local deployment configuration against the Arc-registered node.
-#   Review the result in the Azure portal (~10 minutes).
+#   Creates the Key Vault, witness storage account, and submits the deployment
+#   with deploymentMode = "Deploy". Azure validates the configuration internally
+#   before starting the full cluster provisioning (~30-60 minutes).
 #
-# Stage 2 — Deploy  (is_exported = true)
-#   Change is_exported to true below, then:
-#   terraform apply
-#   Triggers the full cluster provisioning (~30-60 minutes).
+# Optional validate-only run (is_exported = false):
+#   Set is_exported = false below, then run terraform apply.
+#   Azure validates settings and surfaces errors (~10 minutes) without starting
+#   provisioning. Change back to true and run terraform apply again to deploy.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Module toggle
+# ---------------------------------------------------------------------------
+
+# Set to false before terraform destroy when the Arc node has been manually
+# deleted from Azure. This skips the cluster module entirely (including the
+# Arc machine data source lookup that fails when the node is gone).
+enable_cluster_module = true
 
 # ---------------------------------------------------------------------------
 # Azure subscription and resource group
@@ -80,6 +90,8 @@ local_admin_password = "dgemsc#utquMHDHp3M"
 default_gateway  = "172.19.18.1"
 dns_servers      = ["172.19.18.2"]
 starting_address = "172.19.18.20"
+# Azure Local requires ~6 infrastructure IPs for single-node deployments.
+# This lab reserves 10 (.20–.30) to simplify the deployment.
 ending_address   = "172.19.18.30"
 subnet_mask      = "255.255.255.0"
 
@@ -100,6 +112,10 @@ servers = [
 # Service principals
 # ---------------------------------------------------------------------------
 
+# SPN created by scripts/01Lab/00_AzurePreRequisites.ps1.
+# Stored as the DefaultARBApplication secret in Key Vault (base64 "id:secret").
+# Azure Local LCM uses this credential to authenticate the Arc Resource Bridge
+# (custom location management plane) to Azure during and after deployment.
 # TODO: replace with the AppId and secret from 00_AzurePreRequisites.ps1 output
 service_principal_id     = "00000000-0000-0000-0000-000000000000"
 service_principal_secret = "your-spn-client-secret"
@@ -159,24 +175,26 @@ traffic_type = ["Compute", "Management"]
 networking_type    = ""
 networking_pattern = ""
 
-# Set to false on a completely fresh environment where no portal or ARM deployment
-# has been run before (i.e. the edgeDevices resource does not yet exist in Azure).
-import_edge_devices = true
-
 # Set to true when a previous terraform apply created deploymentSettings in Azure
 # but timed out before saving state (e.g. "context deadline exceeded").
 # Set to false on a fresh environment where deploymentSettings does not yet exist.
 import_deployment_settings = false
 
+# Populate with the role assignment GUIDs from a 409 RoleAssignmentExists error
+# when a previous apply created these but the state was lost before saving.
+# Keys: "<SERVER>_DMR" and "<SERVER>_INFRA". Values: GUIDs from the error output.
+# Reset to {} after a successful apply.
+import_machine_rg_role_assignment_ids = {}
+
 
 # ---------------------------------------------------------------------------
-# Deployment mode — see two-stage flow at the top of this file
+# Deployment mode — see deployment flow at the top of this file
 #
-# false = Validate (Stage 1, default)
-# true  = Deploy   (Stage 2, change after successful validation)
+# true  = Deploy   (default, recommended)
+# false = Validate only (optional, to check configuration before deploying)
 # ---------------------------------------------------------------------------
 
-is_exported = false
+is_exported = true
 
 # ---------------------------------------------------------------------------
 # Deployment options

@@ -30,7 +30,8 @@ For a detailed walkthrough, visit: https://schmitt-nieto.com/blog/azure-local-de
   - [Local module fork](#local-module-fork)
   - [Configuration](#configuration)
   - [Authentication](#authentication)
-  - [Two-stage deployment](#two-stage-deployment)
+  - [Deployment](#deployment)
+  - [Recovering from a partial apply](#recovering-from-a-partial-apply)
   - [RDMA](#rdma)
   - [Security notes](#security-notes)
 - [Prerequisites](#prerequisites)
@@ -68,7 +69,7 @@ AzSHCI/
 │   │   ├── 00_Infra_AzHCI.ps1         # Host networking + VM provisioning
 │   │   ├── 01_DC.ps1                  # Domain Controller configuration
 │   │   ├── 02_Cluster.ps1             # Cluster node setup + Arc registration
-│   │   ├── 03_TroubleshootingExtensions.ps1  # Arc extension pre-staging (required for Terraform deployment)
+│   │   ├── 03_TroubleshootingExtensions.ps1  # Arc extension troubleshooting (extensions now auto-installed by Terraform)
 │   │   ├── 99_Offboarding.ps1         # Full lab teardown
 │   │   └── Old version/              # Archived (reference only)
 │   │       └── 02_Cluster.ps1
@@ -109,6 +110,8 @@ Each folder under `scripts/` covers a distinct lifecycle phase:
 - **03VMDeployment**: Remote access to workload VMs running on top of the Azure Local cluster.
 
 The `terraform/` folder provides an Infrastructure-as-Code alternative to the manual portal deployment step. It uses a local fork of the [Azure Verified Module for Azure Local](https://github.com/Azure/terraform-azurerm-avm-res-azurestackhci-cluster) (see the [Local module fork](#local-module-fork) section) to deploy the cluster after the node has been registered with Arc by `02_Cluster.ps1`.
+
+> **Note**: The Terraform implementation included here is a **proof of concept**. It lives in this repository to validate the approach alongside the PowerShell scripts, but it is not intended as a production-grade IaC solution. Once the implementation is stable, it will be moved to a dedicated repository where a proper operational framework will be established: remote state management, modular pipelines, and full Day-2 lifecycle operations.
 
 ---
 
@@ -234,17 +237,19 @@ Leave both empty to fall back to device code login.
 
 ---
 
-#### 4. `03_TroubleshootingExtensions.ps1`, Arc extension pre-staging
+#### 4. `03_TroubleshootingExtensions.ps1`, Arc extension troubleshooting
 
-> **Required before Terraform deployment.** When deploying via the Azure portal wizard, the mandatory Arc extensions are installed automatically during the cluster creation flow. Terraform does not handle this step. The extensions must be present on the node **before** `terraform apply` is run or the `validatedeploymentsetting` step will fail with `ValidationFailed: Could not find any edge device... Please verify that the Device Management Extension is successfully installed`.
+> **No longer required before Terraform deployment.** As of 2026-04-02, the four required Arc extensions are installed automatically during the first `terraform apply` (validate stage). Running this script before `terraform apply` is no longer necessary.
 
-> When deploying through the portal wizard only, this script is not needed.
+> This script remains useful for troubleshooting: if any extension is in a `Failed` state, stuck at a wrong version, or needs to be reconciled outside of Terraform, run this script to fix the affected extensions on the selected node.
+
+> When deploying through the portal wizard only, this script is not needed either.
 
 An interactive tool that connects to Azure, retrieves Arc-connected machines with `CloudMetadataProvider = "AzSHCI"` and reconciles the four required extensions on the selected node. For each extension the script checks three conditions in order:
 
-1. **Missing** — the extension is not installed at all: installs it.
-2. **Failed** — the extension is in a Failed provisioning state: removes any resource locks, removes the extension and reinstalls it.
-3. **Version mismatch** — the extension is installed but at a different version than the pinned value: removes and reinstalls with the exact target version regardless of whether the installed version is older or newer.
+1. **Missing** the extension is not installed at all: installs it.
+2. **Failed** the extension is in a Failed provisioning state: removes any resource locks, removes the extension and reinstalls it.
+3. **Version mismatch** the extension is installed but at a different version than the pinned value: removes and reinstalls with the exact target version regardless of whether the installed version is older or newer.
 
 The four required extensions and their pinned versions are:
 
@@ -255,7 +260,9 @@ The four required extensions and their pinned versions are:
 | `AzureEdgeLifecycleManager` | `Microsoft.AzureStack.Orchestration` | `LcmController` | `30.2601.0.1162` | Disabled |
 | `AzureEdgeRemoteSupport` | `Microsoft.AzureStack.Observability` | `EdgeRemoteSupport` | `1.0.11.2` | Enabled |
 
-After installing or reinstalling any extension the script polls Azure (up to 10 minutes, 20-second intervals) until all four extensions reach `Succeeded` state before returning.
+After installing or reinstalling any extension the script polls Azure (up to 10 minutes, 20-second intervals) until all four extensions reach `Succeeded` state.
+
+Once all extensions are confirmed `Succeeded`, the script applies a **LcmController NuGet hotfix** on the node via **Azure Arc Run Command** (no RDP or direct network access to the node required). This fixes a bug in `Microsoft.AzureStack.Role.Deployment.Service 10.2601.x` where `GetTargetBuildManifest` incorrectly blocks the cloud manifest download fallback when Azure pushes minimal `publicSettings` (`CloudName`, `DeviceType`, `RegionName` only). Without this fix, `terraform apply` fails at the `validatedeploymentsetting` step with `DownloadDeploymentPackage` reporting four empty download URLs. The fix patches one line in `DownloadHelpers.psm1` and restarts the `LcmController` Windows service on the node. The step is idempotent, it checks whether the patch has already been applied before modifying anything.
 
 **Authentication** (set the variables at the top of the script before running):
 
@@ -402,15 +409,15 @@ Key variable to adjust: `$LocalUser` (the local user account on the target VM; d
 
 ## Terraform Deployment
 
-> **Validated end-to-end.** The Terraform path has been successfully used to complete a full Azure Local deployment (Stage 1 Validate + Stage 2 Deploy) on this lab configuration. It is a supported alternative to the Azure portal wizard.
+> **Proof of concept - validated end-to-end.** The Terraform path has been successfully used to complete a full Azure Local deployment in a single `terraform apply` on this lab configuration and serves as a supported alternative to the Azure portal wizard. It is included here to validate the IaC approach alongside the PowerShell scripts. When the implementation reaches a stable state, it will be extracted to a **dedicated repository** with a proper operational framework: remote state backend, modular pipeline structure, and full Day-2 lifecycle coverage.
 
 The `terraform/` folder contains an Infrastructure-as-Code deployment for the Azure Local cluster. It is a direct alternative to clicking through the Azure portal after Arc registration completes.
 
 ### Pre-requisites before running Terraform
 
-The Azure portal wizard installs the mandatory Arc extensions automatically during the deployment wizard flow. When deploying via Terraform those extensions must be present on the node **before** `terraform apply` is run. Run `scripts/01Lab/03_TroubleshootingExtensions.ps1` first.
+The four mandatory Arc extensions (`AzureEdgeTelemetryAndDiagnostics`, `AzureEdgeDeviceManagement`, `AzureEdgeLifecycleManager`, `AzureEdgeRemoteSupport`) are installed automatically during Stage 1 (`terraform apply` with `is_exported = false`). Running `scripts/01Lab/03_TroubleshootingExtensions.ps1` before Terraform is **no longer required**.
 
-All four extensions must be present and at the correct pinned version (see the [script reference](#4-03_troubleshootingextensionsps1-arc-extension-pre-staging) above). Terraform will fail at the `validatedeploymentsetting` step with a `ValidationFailed` error if any extension is missing.
+`03_TroubleshootingExtensions.ps1` remains available as a troubleshooting tool if any extension ends up in a `Failed` state or needs to be reconciled manually outside of Terraform (see the [script reference](#4-03_troubleshootingextensionsps1-arc-extension-troubleshooting) above).
 
 ### What it creates
 
@@ -435,7 +442,7 @@ The local module (`modules/azurelocal/`) then creates and wires together:
 | Azure API provider | `azure/azapi ~> 2.4` |
 | Azure AD provider | `hashicorp/azuread ~> 2.50` |
 | Node Arc-registered | `02_Cluster.ps1` must have completed successfully |
-| Arc extensions pre-staged | `03_TroubleshootingExtensions.ps1` must have completed successfully |
+| Arc extensions | Installed automatically during Stage 1 (`terraform apply` with `is_exported = false`) |
 | SPN with required RBAC | Created by `00_AzurePreRequisites.ps1` |
 
 ### Files
@@ -540,38 +547,55 @@ Terraform reads the `ARM_*` environment variables automatically. No changes to `
 
 ---
 
-### Two-stage deployment
+### Deployment
 
-The Azure Local deployment runs in two stages controlled by the `is_exported` variable.
-
-**Stage 1: Validate** (`is_exported = false`, the default)
+The deployment mode is controlled by the `is_exported` variable. **A single `terraform apply` with `is_exported = true` is sufficient** - Azure Local validates the configuration internally before starting the full provisioning, so no separate validate stage is needed.
 
 ```powershell
 cd terraform
 
 terraform init
-terraform plan   # review what will be created before committing
+terraform plan
 terraform apply
 ```
 
-Terraform creates the Key Vault and storage account, then submits the deployment configuration for validation. The node is checked for readiness and any configuration errors are surfaced (~10 minutes). Review the result in the Azure portal before proceeding.
+Terraform creates the Key Vault and storage account, registers the edge device, assigns roles, stores secrets, and submits the deployment settings with `deploymentMode = "Deploy"`. Azure runs an internal validation before provisioning the cluster (~30-60 minutes total). Monitor progress in the Azure portal under the resource group.
 
-**Stage 2: Deploy** (`is_exported = true`)
+**Optional: validate-only run** (`is_exported = false`)
 
-After a successful validation, change `is_exported` in `terraform.tfvars`:
-
-```hcl
-is_exported = true
-```
-
-Then plan and apply again:
+If you want to surface configuration errors before committing to a full deployment, set `is_exported = false` in `terraform.tfvars` and run `terraform apply`. Azure validates the settings and reports any issues (~10 minutes) without starting provisioning. Once satisfied, change to `is_exported = true` and run `terraform apply` again.
 
 ```powershell
-terraform plan   # confirm only the deployment mode changes
+terraform plan   # confirm only the deployment mode changes from Validate to Deploy
 terraform apply
 ```
 
-This triggers the full cluster provisioning (~30-60 minutes). Monitor progress in the Azure portal under the resource group.
+### Recovering from a partial apply
+
+Long-running operations (validation ~10 min, full deployment ~30-60 min) can time out or lose state before Terraform saves the result. Two variables handle the most common recovery scenarios.
+
+**`import_deployment_settings`** (bool, default `false`)
+
+Set to `true` when a previous `terraform apply` created the `deploymentSettings/default` resource in Azure but timed out before saving it to state. Without this, the next apply fails with `Resource already exists`.
+
+```hcl
+import_deployment_settings = true
+```
+
+Reset to `false` after a successful apply.
+
+**`import_machine_rg_role_assignment_ids`** (map, default `{}`)
+
+Set when a previous apply created the resource-group-scoped role assignments (`<SERVER>_DMR`, `<SERVER>_INFRA`) but state was lost. Without this, the next apply fails with `409 RoleAssignmentExists`. The GUIDs appear in the error message as `The ID of the existing role assignment is <guid>`.
+
+```hcl
+import_machine_rg_role_assignment_ids = {
+  "AZLN01_DMR"   = "db214d43-5a4d-f471-dcbb-0b9fc086dd66"
+  "AZLN01_INFRA" = "3a405fd3-3175-685e-dc90-97e842c69f16"
+}
+```
+
+Reset to `{}` after a successful apply.
 
 ### RDMA
 
@@ -584,6 +608,7 @@ This triggers the full cluster provisioning (~30-60 minutes). Monitor progress i
 - The default lab credentials (`dgemsc#utquMHDHp3M`) in the example file are intentional lab defaults. Replace them before running.
 - On `terraform destroy`, the provider purges the Key Vault immediately (`purge_soft_delete_on_destroy = true`) so the same name can be reused on the next deployment.
 - `resource_provider_registrations = "none"` is set in `providers.tf`. Terraform's azurerm provider would otherwise attempt to auto-register dozens of unrelated providers (ContainerInstance, Databricks, EventGrid...) at subscription scope, requiring `*/register/action` permission. All providers needed for Azure Local are already registered by `00_AzurePreRequisites.ps1`, so this is both safe and avoids over-privileging the SPN.
+- **Secret rotation**: the client secret generated by `00_AzurePreRequisites.ps1` is valid for 2 years. Rotate it before it expires to avoid service disruptions. Follow the [ARB Service Principal secret rotation procedure](https://github.com/MicrosoftDocs/azure-stack-docs/blob/main/azure-local/manage/manage-secrets-rotation.md#change-arb-service-principal-secret) and update `service_principal_secret` in `terraform.tfvars` (and the `$SPNSecret` variable in any script that uses it) with the new value.
 
 ---
 
@@ -681,11 +706,8 @@ notepad terraform.tfvars
 # Initialise providers and module
 terraform init
 
-# Stage 1: validate (is_exported = false, the default)
-terraform apply
-# Review the validation result in the Azure portal, then set is_exported = true
-
-# Stage 2: deploy (is_exported = true)
+# Deploy in a single apply (is_exported = true, the default)
+terraform plan
 terraform apply
 ```
 
@@ -737,6 +759,7 @@ See the [Terraform Deployment](#terraform-deployment) section below for full det
 - **Host-level changes**: the scripts create a Hyper-V vSwitch, a NAT object and firewall rules on the host. Verify the `172.19.18.0/24` subnet does not conflict with your environment.
 - **Offboarding is destructive**: `99_Offboarding.ps1` deletes VMs, VHDs, network objects and the entire lab folder without further prompting. Review the script and the variables before executing.
 - **Azure costs**: managed disks are created temporarily during image download and deleted immediately after. Verify no orphaned disks remain in your resource group if a script is interrupted.
+- **Secret rotation**: the Service Principal client secret generated by `00_AzurePreRequisites.ps1` is valid for 2 years. Rotate it before it expires to prevent authentication failures across all scripts and Terraform runs that rely on it. Follow the [ARB Service Principal secret rotation procedure](https://github.com/MicrosoftDocs/azure-stack-docs/blob/main/azure-local/manage/manage-secrets-rotation.md#change-arb-service-principal-secret) and update every location where the secret is referenced (`$SPNSecret` in `02_Cluster.ps1` and `03_TroubleshootingExtensions.ps1`, and `service_principal_secret` in `terraform/terraform.tfvars`).
 
 ---
 
@@ -745,6 +768,7 @@ See the [Terraform Deployment](#terraform-deployment) section below for full det
 - Additional end-to-end automation scenarios (AVD on Azure Local, AKS Arc lifecycle).
 - Multi-node lab variant (two HCI nodes).
 - Automated post-deployment validation checks.
+- **Dedicated Terraform repository**: once the IaC proof of concept in `terraform/` is stable, it will be extracted to a separate repository with a full operational framework: remote state backend (Azure Blob Storage), modular pipeline structure, and Day-2 lifecycle operations (upgrades, node management, monitoring).
 
 ---
 

@@ -1,6 +1,6 @@
 output "arc_settings" {
-  description = "Arc settings instance after HCI connected."
-  value       = data.azapi_resource.arc_settings
+  description = "Arc settings instance after HCI connected. null until deployment_completed = true."
+  value       = var.deployment_completed ? data.azapi_resource.arc_settings[0] : null
 }
 
 output "arcbridge" {

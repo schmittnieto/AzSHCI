@@ -1,4 +1,20 @@
 # ---------------------------------------------------------------------------
+# Module toggle
+# ---------------------------------------------------------------------------
+
+variable "enable_cluster_module" {
+  type        = bool
+  default     = true
+  description = <<-EOT
+    Set to false to skip the entire Azure Local cluster module. This disables
+    all data source lookups (including azurerm_arc_machine) so that terraform
+    destroy can proceed even when the Arc node has been manually deleted from
+    Azure. The Key Vault and storage account are always managed regardless of
+    this flag.
+  EOT
+}
+
+# ---------------------------------------------------------------------------
 # Azure subscription and resource group
 # ---------------------------------------------------------------------------
 
@@ -327,14 +343,21 @@ variable "networking_pattern" {
   default     = ""
 }
 
-variable "import_edge_devices" {
-  type        = bool
-  default     = true
+variable "import_machine_rg_role_assignment_ids" {
+  type        = map(string)
+  default     = {}
   description = <<-EOT
-    When true, Terraform imports the existing Microsoft.AzureStackHCI/edgeDevices/default resource
-    for each Arc machine instead of creating it. Set to true if the edge device already exists in
-    Azure (e.g. from a prior portal or ARM template deployment). Set to false on a completely fresh
-    environment where no deployment has been attempted before.
+    Map of machine_rg_role_assign keys to existing Azure role assignment GUIDs.
+    Set this when a previous terraform apply created these role assignments but the
+    state was lost before they were saved (results in 409 RoleAssignmentExists on the
+    next apply). Keys follow the pattern "<SERVER>_DMR" and "<SERVER>_INFRA".
+    Values are the role assignment GUIDs shown in the 409 error message.
+    Reset to {} after a successful apply.
+    Example:
+      import_machine_rg_role_assignment_ids = {
+        "AZLN01_DMR"   = "db214d43-5a4d-f471-dcbb-0b9fc086dd66"
+        "AZLN01_INFRA" = "3a405fd3-3175-685e-dc90-97e842c69f16"
+      }
   EOT
 }
 

@@ -449,6 +449,10 @@ if ($spnCreated -and $spnDetails) {
     Write-Host ("  Client Secret   : {0}" -f $spnDetails.Secret)          -ForegroundColor Cyan
     Write-Host ("  Secret Expiry   : {0}" -f $spnDetails.SecretExpiry)    -ForegroundColor Cyan
     Write-Host ""
+    Write-Host "  IMPORTANT: Rotate this secret before it expires to avoid service disruptions." -ForegroundColor Yellow
+    Write-Host "  Follow the ARB Service Principal secret rotation procedure:" -ForegroundColor Yellow
+    Write-Host "  https://github.com/MicrosoftDocs/azure-stack-docs/blob/main/azure-local/manage/manage-secrets-rotation.md#change-arb-service-principal-secret" -ForegroundColor Yellow
+    Write-Host ""
     Write-Host "  To connect with this SPN in PowerShell:" -ForegroundColor White
     Write-Host ""
     Write-Host ('  $spnCredential = New-Object PSCredential(') -ForegroundColor White

@@ -23,7 +23,7 @@ resource "azapi_resource" "validatedeploymentsetting" {
     azurerm_key_vault_secret.local_admin_credential,
     azurerm_key_vault_secret.witness_storage_key,
     azapi_resource.cluster,
-    azapi_resource.edge_device,
+    azapi_resource_action.edge_device,
     azurerm_role_assignment.service_principal_role_assign,
     azurerm_role_assignment.machine_role_assign,
     azurerm_role_assignment.machine_rg_role_assign,

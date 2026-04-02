@@ -2,38 +2,19 @@
 #
 # Deployment is a two-stage process controlled by the is_exported variable:
 #
-#   Stage 1 — Validate (is_exported = false, default)
+#   Stage 1 - Validate (is_exported = false, default)
 #     terraform apply
 #     Creates the Key Vault and witness storage account, then runs the Azure
 #     Local deployment validation (~10 minutes). Review the result in the
 #     Azure portal before proceeding.
 #
-#   Stage 2 — Deploy  (is_exported = true)
+#   Stage 2 - Deploy  (is_exported = true)
 #     Change is_exported to true in terraform.tfvars, then:
 #     terraform apply
 #     Triggers the full cluster provisioning (~30-60 minutes).
 #
 # Module registry: https://registry.terraform.io/modules/Azure/avm-res-azurestackhci-cluster/azurerm/latest
 # Module source:   https://github.com/Azure/terraform-azurerm-avm-res-azurestackhci-cluster
-
-# ---------------------------------------------------------------------------
-# Import block for existing edgeDevices resources.
-#
-# Microsoft.AzureStackHCI/edgeDevices is created by portal and ARM template
-# deployments and persists across terraform destroy (it is not managed by
-# Terraform state until imported). When import_edge_devices = true this block
-# imports the existing resource automatically so that azapi_resource.edge_device
-# does not fail with "Resource already exists".
-#
-# Set import_edge_devices = false in terraform.tfvars on a completely fresh
-# environment where no portal or ARM deployment has been run before.
-# ---------------------------------------------------------------------------
-
-import {
-  for_each = var.import_edge_devices ? { for s in var.servers : s.name => s } : {}
-  id       = "/subscriptions/${var.subscription_id}/resourceGroups/${var.resource_group_name}/providers/Microsoft.HybridCompute/machines/${each.key}/providers/Microsoft.AzureStackHCI/edgeDevices/default"
-  to       = module.azure_local_cluster.azapi_resource.edge_device[each.key]
-}
 
 # ---------------------------------------------------------------------------
 # Import block for existing deploymentSettings resource.
@@ -49,9 +30,25 @@ import {
 # ---------------------------------------------------------------------------
 
 import {
-  for_each = var.import_deployment_settings ? { "default" = "default" } : {}
+  for_each = var.import_deployment_settings && var.enable_cluster_module ? { "default" = "default" } : {}
   id       = "/subscriptions/${var.subscription_id}/resourceGroups/${var.resource_group_name}/providers/Microsoft.AzureStackHCI/clusters/${var.cluster_name}/deploymentSettings/default"
-  to       = module.azure_local_cluster.azapi_resource.validatedeploymentsetting
+  to       = module.azure_local_cluster[0].azapi_resource.validatedeploymentsetting
+}
+
+# ---------------------------------------------------------------------------
+# Import block for existing machine resource-group role assignments.
+#
+# machine_rg_role_assign resources (DMR, INFRA) may already exist in Azure if
+# a previous terraform apply created them but the state was lost before saving
+# (results in 409 RoleAssignmentExists on the next apply).
+# Populate import_machine_rg_role_assignment_ids with the GUIDs from the 409
+# error message, run terraform apply, then reset the variable to {}.
+# ---------------------------------------------------------------------------
+
+import {
+  for_each = var.enable_cluster_module ? var.import_machine_rg_role_assignment_ids : {}
+  id       = "/subscriptions/${var.subscription_id}/resourceGroups/${var.resource_group_name}/providers/Microsoft.Authorization/roleAssignments/${each.value}"
+  to       = module.azure_local_cluster[0].azurerm_role_assignment.machine_rg_role_assign[each.key]
 }
 
 # ---------------------------------------------------------------------------
@@ -125,6 +122,8 @@ resource "azurerm_storage_account" "witness" {
 # ---------------------------------------------------------------------------
 
 module "azure_local_cluster" {
+  count = var.enable_cluster_module ? 1 : 0
+
   # Local fork of Azure/avm-res-azurestackhci-cluster/azurerm v2.x with three additions:
   #   - networking_type and networking_pattern passed to hostNetwork (API 2025-09-15-preview)
   #   - use_dhcp, enable_storage_auto_ip, streaming_data_client, episodic_data_upload exposed
