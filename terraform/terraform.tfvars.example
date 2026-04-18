@@ -12,7 +12,7 @@
 # Stage 1 — Validate (is_exported = false)
 #   terraform init && terraform apply
 #   Creates Key Vault, storage account, assigns roles, registers edgeDevices,
-#   then validates the Azure Local deployment configuration (~60 minutes).
+#   then validates the Azure Local deployment configuration (~90 minutes).
 #   Review the result in the Azure portal before proceeding.
 #
 # Stage 2 — Deploy  (is_exported = true)

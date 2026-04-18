@@ -463,6 +463,14 @@ if ($spnCreated -and $spnDetails) {
     Write-Host ('      -Subscription "' + $spnDetails.SubscriptionId + '" `') -ForegroundColor White
     Write-Host ('      -Credential $spnCredential') -ForegroundColor White
     Write-Host ""
+    Write-Host "  To connect with this SPN in Azure CLI:" -ForegroundColor White
+    Write-Host ""
+    Write-Host ('  az login --service-principal `') -ForegroundColor White
+    Write-Host ('      --username "' + $spnDetails.AppId + '" `') -ForegroundColor White
+    Write-Host ('      --password "' + $spnDetails.Secret + '" `') -ForegroundColor White
+    Write-Host ('      --tenant "' + $spnDetails.TenantId + '"') -ForegroundColor White
+    Write-Host ('  az account set --subscription "' + $spnDetails.SubscriptionId + '"') -ForegroundColor White
+    Write-Host ""
     Write-Host "================================================================" -ForegroundColor Yellow
 }
 
