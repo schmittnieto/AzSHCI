@@ -15,3 +15,6 @@ NugetStore/
 
 # Packages
 Packages/
+
+# Local project context and memory (never synced)
+Context/

@@ -17,6 +17,10 @@ For a detailed walkthrough, visit: https://schmitt-nieto.com/blog/azure-local-de
 ## Table of Contents
 
 - [Repository Structure](#repository-structure)
+- [Architecture](#architecture)
+  - [Lab Network Topology](#lab-network-topology)
+  - [Deployment Workflow](#deployment-workflow)
+  - [Terraform Module Architecture](#terraform-module-architecture)
 - [Default Lab Configuration](#default-lab-configuration)
 - [Script Reference](#script-reference)
   - [01Lab: Initial Lab Deployment](#01lab-initial-lab-deployment)
@@ -112,6 +116,94 @@ Each folder under `scripts/` covers a distinct lifecycle phase:
 The `terraform/` folder provides an Infrastructure-as-Code alternative to the manual portal deployment step. It uses a local fork of the [Azure Verified Module for Azure Local](https://github.com/Azure/terraform-azurerm-avm-res-azurestackhci-cluster) (see the [Local module fork](#local-module-fork) section) to deploy the cluster after the node has been registered with Arc by `02_Cluster.ps1`.
 
 > **Note**: The Terraform implementation included here is a **proof of concept**. It lives in this repository to validate the approach alongside the PowerShell scripts, but it is not intended as a production-grade IaC solution. Once the implementation is stable, it will be moved to a dedicated repository where a proper operational framework will be established: remote state management, modular pipelines, and full Day-2 lifecycle operations.
+
+---
+
+## Architecture
+
+The diagrams below describe how the lab is wired together, the order in which the scripts run and how the optional Terraform path builds the cluster. They are rendered automatically by GitHub.
+
+### Lab Network Topology
+
+A single Hyper-V host runs two nested VMs on an internal virtual switch. The host provides outbound connectivity through a NAT gateway so both VMs reach the internet and Azure. The node registers itself with Azure Arc, which is the entry point for the portal or Terraform deployment.
+
+```mermaid
+flowchart TB
+    Azure["Azure Cloud<br/>Arc, Key Vault, Storage, AKS Arc"]
+    Internet([Internet])
+
+    subgraph Host["Hyper-V Host"]
+        vSwitch{{"Internal vSwitch azurelocal<br/>172.19.18.0/24"}}
+        NAT["Host NAT gateway<br/>172.19.18.1"]
+        DC["DC VM<br/>172.19.18.2<br/>azurelocal.local<br/>NIC MGMT1"]
+        Node["AZLN01 node VM<br/>172.19.18.10<br/>Azure Local<br/>NICs MGMT1 and MGMT2<br/>2 x 1 TB S2D plus vTPM"]
+    end
+
+    DC --- vSwitch
+    Node --- vSwitch
+    vSwitch --- NAT
+    NAT --> Internet
+    Internet --> Azure
+    Node -. Arc registration .-> Azure
+```
+
+### Deployment Workflow
+
+The lab is built by running the scripts in a fixed order. After the node is Arc-registered the cluster can be deployed either through the Azure portal wizard or through the Terraform path. Day-2 scripts take over once the cluster is up.
+
+```mermaid
+flowchart TD
+    A["00_AzurePreRequisites.ps1<br/>Azure login, RG, SPN, RBAC, providers"]
+    B["00_Infra_AzHCI.ps1<br/>vSwitch, NAT, VM provisioning"]
+    C["Manual OS install on DC VM"]
+    D["01_DC.ps1<br/>AD forest, OU structure, LCM user"]
+    E["Manual OS install on AZLN01 VM"]
+    F["02_Cluster.ps1<br/>Node config, static IP, Arc registration"]
+    G{"Deployment method"}
+    H["Azure portal wizard"]
+    I["terraform apply<br/>Stage 1 Validate then Stage 2 Deploy"]
+    J["Cluster deployed"]
+    K["02Day2 operations<br/>start/stop, images, AKS Arc, VHDX"]
+
+    A --> B --> C --> D --> E --> F --> G
+    G -->|Portal| H --> J
+    G -->|IaC| I --> J
+    J --> K
+```
+
+### Terraform Module Architecture
+
+The Terraform root configuration creates the shared prerequisites first, then calls the local fork of the AVM module. The module assigns RBAC, registers the Arc edge device and submits the deployment settings in two stages. Post-deployment reads stay disabled until `deployment_completed` is set to `true`.
+
+```mermaid
+flowchart TB
+    subgraph Root["terraform/ root configuration"]
+        Main["main.tf"]
+        KV["Key Vault"]
+        SA["Witness storage account"]
+    end
+
+    subgraph Module["modules/azurelocal (AVM fork)"]
+        RBAC["RBAC role assignments"]
+        Edge["edgeDevices registration"]
+        Validate["deploymentSettings Validate"]
+        Deploy["deploymentSettings Deploy"]
+        Post["Post-deploy reads<br/>arc_settings, customlocation, arcbridge"]
+    end
+
+    subgraph AzureRes["Azure resources"]
+        Cluster["Microsoft.AzureStackHCI clusters"]
+        ArcNode["Arc-registered AZLN01"]
+    end
+
+    Main --> KV
+    Main --> SA
+    Main --> Module
+    RBAC --> Edge --> Validate --> Deploy
+    Edge --> ArcNode
+    Deploy --> Cluster
+    Deploy -. deployment_completed .-> Post
+```
 
 ---
 
