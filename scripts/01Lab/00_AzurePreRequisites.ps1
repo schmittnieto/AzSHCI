@@ -11,7 +11,7 @@
     - Verifies Azure authentication and prompts via device code login when no active session exists.
     - Lets you select a subscription interactively.
     - Lets you choose an existing resource group or create a new one (with a recommended name).
-    - Lets you assign the required RBAC roles to an existing user or to a newly created Service Principal.
+    - Lets you assign the required RBAC roles to an existing user, an existing Service Principal, or a newly created Service Principal.
     - Registers all required Azure resource providers if they are not already registered.
     - Prints SPN connection details at the end if a Service Principal was created.
 
@@ -20,6 +20,12 @@
     - Run this script with administrative privileges.
     - Ensure the Execution Policy allows the script to run:
       Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+    - Run this script as an interactive user with permissions to create role
+      assignments (e.g. Owner or User Access Administrator). If a cached Service
+      Principal session is detected, the script signs out and forces an interactive
+      login, because a delegated SPN session may carry ABAC conditions that block
+      'Microsoft.Authorization/roleAssignments/write' for some roles and cause
+      'AuthorizationFailed' errors during role assignment.
 #>
 
 #region Variables
@@ -168,9 +174,24 @@ Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMess
 
 $context = Get-AzContext -ErrorAction SilentlyContinue
 if ($context) {
-    Write-Message "Active session: $($context.Account.Id) on subscription '$($context.Subscription.Name)'." -Type "Info"
-    $reuse = Read-Host "Use this session? (Y/N)"
-    if ($reuse -notmatch '^[Yy]') { $context = $null }
+    $accountType = $context.Account.Type
+    Write-Message "Active session: $($context.Account.Id) (type: $accountType) on subscription '$($context.Subscription.Name)'." -Type "Info"
+
+    # Role assignments must be performed by an interactive user with the right
+    # privileges. A reused Service Principal session typically carries an ABAC
+    # condition that blocks 'roleAssignments/write' for some roles, so we sign out
+    # and force a fresh interactive login instead of reusing it.
+    if ($accountType -eq "ServicePrincipal") {
+        Write-Message "Current session is a Service Principal, which cannot reliably assign roles. Signing out to re-authenticate as a user..." -Type "Warning"
+        Disconnect-AzAccount -ErrorAction SilentlyContinue | Out-Null
+        $context = $null
+    } else {
+        $reuse = Read-Host "Use this session? (Y/N)"
+        if ($reuse -notmatch '^[Yy]') {
+            Disconnect-AzAccount -ErrorAction SilentlyContinue | Out-Null
+            $context = $null
+        }
+    }
 }
 
 if (-not $context) {
@@ -275,9 +296,10 @@ Write-Host ""
 Write-Message "Select how to assign the required Azure RBAC roles:" -Type "Info"
 Write-Host "  1. Assign to an existing user account"
 Write-Host "  2. Create a new Service Principal and assign roles to it"
+Write-Host "  3. Assign to an existing Service Principal"
 do {
-    $principalChoice = Read-Host "Select option (1 or 2)"
-} while ($principalChoice -notin @("1","2"))
+    $principalChoice = Read-Host "Select option (1, 2 or 3)"
+} while ($principalChoice -notin @("1","2","3"))
 
 $spnCreated  = $false
 $spnDetails  = $null
@@ -300,6 +322,42 @@ if ($principalChoice -eq "1") {
     }
     $principalId    = $principal.Id
     $principalLabel = $UserPrincipalName
+
+} elseif ($principalChoice -eq "3") {
+
+    Write-Host ""
+    Write-Message "Enter the existing Service Principal by its App ID (client ID) or display name." -Type "Info"
+    $spnIdentifier = Read-Host "App ID or display name"
+    if ([string]::IsNullOrWhiteSpace($spnIdentifier)) {
+        Write-Message "No Service Principal identifier was provided." -Type "Error"
+        exit 1
+    }
+
+    Write-Message "Resolving service principal '$spnIdentifier'..." -Type "Info"
+    try {
+        $spGuid = [System.Guid]::Empty
+        if ([System.Guid]::TryParse($spnIdentifier, [ref]$spGuid)) {
+            $sp = Get-AzADServicePrincipal -ApplicationId $spnIdentifier -ErrorAction Stop
+        } else {
+            $sp = Get-AzADServicePrincipal -DisplayName $spnIdentifier -ErrorAction Stop
+        }
+
+        if (-not $sp) {
+            Write-Message "Service principal '$spnIdentifier' was not found in the directory." -Type "Error"
+            exit 1
+        }
+        if ($sp.Count -gt 1) {
+            Write-Message "Multiple service principals match '$spnIdentifier'. Re-run and use the unique App ID (client ID)." -Type "Error"
+            exit 1
+        }
+        Write-Message "Service principal resolved. ObjectId: $($sp.Id)" -Type "Success"
+    } catch {
+        Write-Message "Failed to resolve service principal '$spnIdentifier'. Details: $_" -Type "Error"
+        exit 1
+    }
+
+    $principalId    = $sp.Id
+    $principalLabel = $sp.DisplayName
 
 } else {
 
