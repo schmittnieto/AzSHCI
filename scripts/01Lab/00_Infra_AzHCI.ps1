@@ -27,37 +27,50 @@
 
 #region Variables
 
+# Load the lab configuration into this session if it has not been loaded yet.
+# Tip: run scripts\01Lab\Set-LabEnv.ps1 once per session to set everything from
+# scripts\01Lab\.env. See scripts\01Lab\.env.example for the full list of keys.
+if ($env:AZSHCI_ENV_LOADED -ne '1') { & "$PSScriptRoot\Set-LabEnv.ps1" }
+
 # Virtual Switch and Network Configuration
-$vSwitchName = "azurelocal"
+$vSwitchName = $env:AZSHCI_VSWITCH_NAME
 $vSwitchNIC = "vEthernet ($vSwitchName)"
-$vNetIPNetwork = "172.19.18.0/24"
+$vNetIPNetwork = $env:AZSHCI_LAB_SUBNET
 $vIPNetworkPrefixLength = ($vNetIPNetwork -split '/')[1]
-$natName = "azurelocal"
-$HCIRootFolder = "E:\AzureLocalLab"
+$natName = $env:AZSHCI_NAT_NAME
+$HCIRootFolder = $env:AZSHCI_LAB_ROOT_FOLDER
 
 # ISO Paths
-$isoPath_HCI = "E:\ISO\AzureLocal24H2.iso"    # Replace with the actual path to your HCI Node ISO
-$isoPath_DC  = "E:\ISO\WS2025.iso"      # Replace with the actual path to your Domain Controller ISO
+$isoPath_HCI = $env:AZSHCI_ISO_PATH_HCI   # HCI Node ISO
+$isoPath_DC  = $env:AZSHCI_ISO_PATH_DC    # Domain Controller ISO
+
+# Management network adapter names (shared by both VMs)
+$NIC1 = $env:AZSHCI_MGMT_NIC1
+$NIC2 = $env:AZSHCI_MGMT_NIC2
 
 # HCI Node VM Configuration
-$HCIVMName = "AZLN01"
-$HCI_Memory = 96GB
-$HCI_Processors = 32
+$HCIVMName = $env:AZSHCI_HCI_VM_NAME
+$HCI_Memory = [int64]$env:AZSHCI_HCI_VM_MEMORY_GB * 1GB
+$HCI_Processors = [int]$env:AZSHCI_HCI_VM_PROCESSORS
+$HCI_OSDiskSize   = [int64]$env:AZSHCI_HCI_OS_DISK_GB * 1GB
+$HCI_S2DDiskSize  = [int64]$env:AZSHCI_HCI_S2D_DISK_GB * 1GB
+$HCI_S2DDiskCount = [int]$env:AZSHCI_HCI_S2D_DISK_COUNT
 $HCI_Disks = @(
-    @{ Path = "${HCIVMName}_C.vhdx"; Size = 127GB },
-    @{ Path = "s2d1.vhdx";            Size = 1024GB },
-    @{ Path = "s2d2.vhdx";            Size = 1024GB }
+    @{ Path = "${HCIVMName}_C.vhdx"; Size = $HCI_OSDiskSize }
 )
-$HCI_NetworkAdapters = @("MGMT1", "MGMT2")
+for ($s2d = 1; $s2d -le $HCI_S2DDiskCount; $s2d++) {
+    $HCI_Disks += @{ Path = "s2d$s2d.vhdx"; Size = $HCI_S2DDiskSize }
+}
+$HCI_NetworkAdapters = @($NIC1, $NIC2)
 
 # Domain Controller VM Configuration
-$DCVMName = "DC"
-$DC_Memory = 4GB
-$DC_Processors = 4
+$DCVMName = $env:AZSHCI_DC_VM_NAME
+$DC_Memory = [int64]$env:AZSHCI_DC_VM_MEMORY_GB * 1GB
+$DC_Processors = [int]$env:AZSHCI_DC_VM_PROCESSORS
 $DC_Disks = @(
-    @{ Path = "${DCVMName}_C.vhdx"; Size = 60GB }
+    @{ Path = "${DCVMName}_C.vhdx"; Size = [int64]$env:AZSHCI_DC_OS_DISK_GB * 1GB }
 )
-$DC_NetworkAdapters = @("MGMT1")
+$DC_NetworkAdapters = @($NIC1)
 
 # Tasks for Progress Bar
 $tasks = @(

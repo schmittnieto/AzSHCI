@@ -361,6 +361,26 @@ variable "import_machine_rg_role_assignment_ids" {
   EOT
 }
 
+variable "import_service_principal_role_assignment_ids" {
+  type        = map(string)
+  default     = {}
+  description = <<-EOT
+    Map of service_principal_role_assign keys to existing Azure role assignment GUIDs.
+    Set this when the Microsoft.AzureStackHCI resource provider role assignment
+    (ACMRM, "Azure Connected Machine Resource Manager") already exists in Azure but
+    is not in Terraform state. This happens when a previous deployment was torn down
+    without terraform destroy: the host-only 99_Offboarding.ps1 does not remove Azure
+    RBAC, so the assignment survives and the next apply fails with 409
+    RoleAssignmentExists. The key is "ACMRM" and the value is the role assignment GUID
+    shown in the 409 error message.
+    Reset to {} after a successful apply.
+    Example:
+      import_service_principal_role_assignment_ids = {
+        "ACMRM" = "9171c7d9-fa42-13b2-7e03-fe37a70ccde7"
+      }
+  EOT
+}
+
 variable "import_deployment_settings" {
   type        = bool
   default     = false

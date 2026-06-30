@@ -18,3 +18,9 @@ Packages/
 
 # Local project context and memory (never synced)
 Context/
+
+# 01Lab session configuration (never synced; holds secrets)
+scripts/01Lab/.env
+
+# Terraform SPN login helper (never synced)
+terraform/Connect-Spn.ps1

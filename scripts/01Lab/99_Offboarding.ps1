@@ -21,18 +21,24 @@
 
 #region Variables
 
+# Load the lab configuration into this session if it has not been loaded yet.
+# These values must match the ones used during deployment so teardown targets
+# the right objects. Run scripts\01Lab\Set-LabEnv.ps1 once per session to set
+# everything from scripts\01Lab\.env.
+if ($env:AZSHCI_ENV_LOADED -ne '1') { & "$PSScriptRoot\Set-LabEnv.ps1" }
+
 # Define VM Names
-$HCIVMName = "AZLN01"
-$DCVMName = "DC"
+$HCIVMName = $env:AZSHCI_HCI_VM_NAME
+$DCVMName = $env:AZSHCI_DC_VM_NAME
 
 # Define Virtual Switch and NAT Configuration
-$vSwitchName    = "azurelocal"
+$vSwitchName    = $env:AZSHCI_VSWITCH_NAME
 $vSwitchNIC     = "vEthernet ($vSwitchName)"
-$natName        = "azurelocal"
-$vNetIPNetwork  = "172.19.18.0/24"
+$natName        = $env:AZSHCI_NAT_NAME
+$vNetIPNetwork  = $env:AZSHCI_LAB_SUBNET
 
 # Define Root Folder for VMs and Disks
-$HCIRootFolder = "E:\AzureLocalLab"
+$HCIRootFolder = $env:AZSHCI_LAB_ROOT_FOLDER
 $HCIDiskFolder = Join-Path -Path $HCIRootFolder -ChildPath "Disk"
 
 # Define Tasks for Progress Bar

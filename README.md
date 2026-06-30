@@ -22,6 +22,7 @@ For a detailed walkthrough, visit: https://schmitt-nieto.com/blog/azure-local-de
   - [Deployment Workflow](#deployment-workflow)
   - [Terraform Module Architecture](#terraform-module-architecture)
 - [Default Lab Configuration](#default-lab-configuration)
+  - [Configuration with the .env file](#configuration-with-the-env-file)
 - [Script Reference](#script-reference)
   - [01Lab: Initial Lab Deployment](#01lab-initial-lab-deployment)
   - [02Day2: Day-Two Operations](#02day2-day-two-operations)
@@ -69,6 +70,9 @@ AzSHCI/
 │       └── copy-to-blog.yml           # Syncs repo to blog on push to main
 ├── scripts/
 │   ├── 01Lab/
+│   │   ├── Set-LabEnv.ps1             # Loads .env into the session (run once per session)
+│   │   ├── .env.example               # Template for scripts/01Lab/.env (copy, then edit)
+│   │   ├── .env                       # Your local config (gitignored, never committed)
 │   │   ├── 00_AzurePreRequisites.ps1  # Azure subscription prep + SPN/RBAC setup
 │   │   ├── 00_Infra_AzHCI.ps1         # Host networking + VM provisioning
 │   │   ├── 01_DC.ps1                  # Domain Controller configuration
@@ -209,7 +213,7 @@ flowchart TB
 
 ## Default Lab Configuration
 
-These scripts are opinionated and ship with hardcoded defaults. **Review and adjust every variable section before running.** The table below summarises the most critical defaults.
+These scripts are opinionated and ship with sensible lab defaults. The 01Lab scripts read their configuration from a single `scripts/01Lab/.env` file that you load into your session once per deployment, so you set every value in one place instead of editing each script. **Review and adjust the values before running.** The table below summarises the most critical defaults. See [Configuration with the .env file](#configuration-with-the-env-file) for the workflow and the full list of keys.
 
 | Setting | Default value |
 |---|---|
@@ -235,7 +239,42 @@ These scripts are opinionated and ship with hardcoded defaults. **Review and adj
 | Time zone (DC) | `W. Europe Standard Time` |
 | Azure region | `westeurope` |
 
-> **Important**: If your machine does not have an `E:` drive, change the path variables in `00_Infra_AzHCI.ps1` and `99_Offboarding.ps1` before running anything.
+> **Important**: If your machine does not have an `E:` drive, set `AZSHCI_LAB_ROOT_FOLDER`, `AZSHCI_ISO_PATH_HCI` and `AZSHCI_ISO_PATH_DC` in `scripts/01Lab/.env` before running anything.
+
+### Configuration with the .env file
+
+The 01Lab deployment and teardown scripts read their configuration from a single `scripts/01Lab/.env` file instead of hardcoded values. You set every value once in that file, load it into your PowerShell session, then run the scripts without editing them. This applies to every 01Lab script except the fully interactive `00_AzurePreRequisites.ps1`, which selects subscription, resource group and principal through prompts.
+
+`scripts/01Lab/.env` is listed in `.gitignore` and must never be committed. A documented template with every key and its lab default is provided in `scripts/01Lab/.env.example`.
+
+**One-time setup per machine:**
+
+```powershell
+Copy-Item scripts\01Lab\.env.example scripts\01Lab\.env
+notepad scripts\01Lab\.env
+```
+
+**Each session, load the variables once, then run the scripts:**
+
+```powershell
+.\scripts\01Lab\Set-LabEnv.ps1
+.\scripts\01Lab\00_Infra_AzHCI.ps1
+.\scripts\01Lab\01_DC.ps1
+.\scripts\01Lab\02_Cluster.ps1
+```
+
+`Set-LabEnv.ps1` reads `scripts/01Lab/.env` and assigns each value as an `AZSHCI_*` environment variable for the session, so every script you run afterwards picks them up. If you forget to run it, each script loads the file automatically the first time it runs. Secrets are loaded but never printed.
+
+At minimum, fill in the Azure identifiers before running `02_Cluster.ps1`:
+
+```dotenv
+AZSHCI_SUBSCRIPTION_ID="your-subscription-id"
+AZSHCI_TENANT_ID="your-tenant-id"
+AZSHCI_RESOURCE_GROUP="rg-azlocal-lab"
+AZSHCI_LOCATION="westeurope"
+```
+
+To register the node with a Service Principal instead of an interactive device code login, also set `AZSHCI_SPN_APP_ID` and `AZSHCI_SPN_SECRET`, both produced by `00_AzurePreRequisites.ps1`. The complete grouped list of keys, covering credentials, networking, VM names, ISO paths, VM sizing and the sleep timers, lives in `scripts/01Lab/.env.example`.
 
 ---
 
@@ -800,15 +839,27 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 ### 3. Review and customise variables
 
-At minimum, open and adjust:
+The 01Lab scripts read their configuration from `scripts/01Lab/.env`. Copy the template and edit it once:
 
-- `scripts/01Lab/00_Infra_AzHCI.ps1`, paths, ISO locations, VM sizing
-- `scripts/01Lab/01_DC.ps1`, passwords, time zone, DNS forwarder
-- `scripts/01Lab/02_Cluster.ps1`, `$SubscriptionID`, `$TenantID`, `$resourceGroupName`, `$Location`
+```powershell
+Copy-Item scripts\01Lab\.env.example scripts\01Lab\.env
+notepad scripts\01Lab\.env
+```
+
+At minimum set these keys before running the scripts:
+
+- `AZSHCI_SUBSCRIPTION_ID`, `AZSHCI_TENANT_ID`, `AZSHCI_RESOURCE_GROUP`, `AZSHCI_LOCATION`, used by `02_Cluster.ps1`
+- `AZSHCI_ISO_PATH_HCI`, `AZSHCI_ISO_PATH_DC`, `AZSHCI_LAB_ROOT_FOLDER`, used by `00_Infra_AzHCI.ps1`
+- `AZSHCI_DEFAULT_ADMIN_PASSWORD`, `AZSHCI_DC_LCM_PASSWORD`, `AZSHCI_NODE_SETUP_PASSWORD`, the lab credentials
+
+See [Configuration with the .env file](#configuration-with-the-env-file) for the complete list of keys. The fully interactive `00_AzurePreRequisites.ps1` does not use `scripts/01Lab/.env`.
 
 ### 4. Run the lab deployment scripts in order
 
 ```powershell
+# Step 0, load your .env into the session (once per session)
+.\scripts\01Lab\Set-LabEnv.ps1
+
 # Step 1, provision host networking and VMs
 .\scripts\01Lab\00_Infra_AzHCI.ps1
 
@@ -891,7 +942,7 @@ See the [Terraform Deployment](#terraform-deployment) section below for full det
 
 ## Safety and Security Notes
 
-- **Hardcoded credentials**: some PowerShell scripts still contain intentional lab defaults such as `Start#1234` and `dgemsc#utquMHDHp3M`. In Terraform, `terraform.tfvars.example` now uses placeholder secrets (`TODO-change-me`, `TODO-your-spn-client-secret`) instead. Review and replace every credential before running and never commit real secrets.
+- **Lab credentials and the `.env` file**: the 01Lab scripts read passwords and Azure identifiers from `scripts/01Lab/.env`. The shipped `scripts/01Lab/.env.example` carries intentional lab defaults such as `Start#1234` and `dgemsc#utquMHDHp3M`. `scripts/01Lab/.env` is listed in `.gitignore` and must never be committed. Share configuration only through `scripts/01Lab/.env.example`. In Terraform, `terraform.tfvars.example` likewise uses placeholder secrets (`TODO-change-me`, `TODO-your-spn-client-secret`). Review and replace every credential before running and never commit real secrets.
 - **Host-level changes**: the scripts create a Hyper-V vSwitch, a NAT object and firewall rules on the host. Verify the `172.19.18.0/24` subnet does not conflict with your environment.
 - **Offboarding is destructive**: `99_Offboarding.ps1` deletes VMs, VHDs, network objects and the entire lab folder without further prompting. Review the script and the variables before executing.
 - **Azure costs**: managed disks are created temporarily during image download and deleted immediately after. Verify no orphaned disks remain in your resource group if a script is interrupted.

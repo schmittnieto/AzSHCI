@@ -27,34 +27,39 @@
 
 #region Variables
 
+# Load the lab configuration into this session if it has not been loaded yet.
+# Tip: run scripts\01Lab\Set-LabEnv.ps1 once per session to set everything from
+# scripts\01Lab\.env. See scripts\01Lab\.env.example for the full list of keys.
+if ($env:AZSHCI_ENV_LOADED -ne '1') { & "$PSScriptRoot\Set-LabEnv.ps1" }
+
 # Define credentials and variables
-$defaultUser = "Administrator"
-$defaultPwd = "Start#1234"
+$defaultUser = $env:AZSHCI_DEFAULT_ADMIN_USER
+$defaultPwd = $env:AZSHCI_DEFAULT_ADMIN_PASSWORD
 $DefaultSecuredPassword = ConvertTo-SecureString $defaultPwd -AsPlainText -Force
 $DefaultCredentials = New-Object System.Management.Automation.PSCredential ($defaultUser, $DefaultSecuredPassword)
 
 # VM and Domain Variables
-$dcVMName  = "DC"
-$domainName = "azurelocal.local"
-$netBIOSName = "AZURELOCAL"
+$dcVMName  = $env:AZSHCI_DC_VM_NAME
+$domainName = $env:AZSHCI_DOMAIN_NAME
+$netBIOSName = $env:AZSHCI_DOMAIN_NETBIOS
 
-$NIC1 = "MGMT1"
-$nic1IP = "172.19.18.2"
-$nic1GW = "172.19.18.1"
-$nic1DNS = "172.19.18.2"
+$NIC1 = $env:AZSHCI_MGMT_NIC1
+$nic1IP = $env:AZSHCI_DC_IP
+$nic1GW = $env:AZSHCI_LAB_GATEWAY
+$nic1DNS = $env:AZSHCI_DC_IP
 
 # Variables for DNS forwarder and time zone
-$dnsForwarder = "8.8.8.8"
-$timeZone = "W. Europe Standard Time" # Use "Get-TimeZone -ListAvailable" to get a list of available Time Zones
+$dnsForwarder = $env:AZSHCI_DNS_FORWARDER
+$timeZone = $env:AZSHCI_DC_TIMEZONE # Use "Get-TimeZone -ListAvailable" to get a list of available Time Zones
 
 # User for Azure Local LCM User (to be used later)
-$setupUser = "hciadmin"
-$setupPwd = "dgemsc#utquMHDHp3M"
+$setupUser = $env:AZSHCI_DC_LCM_USER
+$setupPwd = $env:AZSHCI_DC_LCM_PASSWORD
 
 # Sleep durations in seconds
-$SleepRename = 20     # Sleep Timer for after PC Renaming
-$SleepDomain = 360    # Sleep Timer for after Domain Making
-$SleepUpdates = 240   # Sleep Timer for after Update Installation
+$SleepRename = [int]$env:AZSHCI_DC_SLEEP_RENAME     # Sleep Timer for after PC Renaming
+$SleepDomain = [int]$env:AZSHCI_DC_SLEEP_DOMAIN    # Sleep Timer for after Domain Making
+$SleepUpdates = [int]$env:AZSHCI_DC_SLEEP_UPDATES   # Sleep Timer for after Update Installation
 # $SleepADServices = 30 # Increased Sleep Timer after DC promotion before configuring AD
 
 # Total number of steps for progress calculation

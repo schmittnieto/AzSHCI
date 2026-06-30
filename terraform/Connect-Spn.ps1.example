@@ -1,0 +1,122 @@
+# Connect-Spn.ps1
+# Clean Azure CLI login as the Terraform service principal.
+
+<#
+.SYNOPSIS
+    Logs the Azure CLI in as the Terraform service principal so that
+    terraform plan / apply run against the intended SPN, tenant and subscription.
+
+.DESCRIPTION
+    Reads service_principal_id, service_principal_secret and subscription_id from
+    terraform/terraform.tfvars, and the tenant id from scripts/01Lab/.env
+    (AZSHCI_TENANT_ID, the same SPN used by the 01Lab scripts). It then clears any
+    cached Azure CLI session and runs:
+
+        az login --service-principal --username <app-id> --password <secret> --tenant <tenant-id>
+        az account set --subscription <subscription-id>
+
+    Clearing the session first avoids reusing a stale or wrong-tenant login, which
+    is what happens if a service principal from another account or tenant is cached.
+
+.PARAMETER TfvarsPath
+    Path to terraform.tfvars. Defaults to the file next to this script.
+
+.PARAMETER EnvPath
+    Path to the 01Lab .env that holds AZSHCI_TENANT_ID. Defaults to
+    ..\scripts\01Lab\.env relative to this script.
+
+.PARAMETER TenantId
+    Overrides the tenant id. When set, the .env is not read for the tenant.
+
+.NOTES
+    - Copy this file to Connect-Spn.ps1 (gitignored) and run that copy.
+    - Requires the Azure CLI (az) on PATH.
+    - terraform.tfvars and scripts/01Lab/.env are gitignored and hold secrets.
+    - Designed by Cristian Schmitt Nieto. For more information and usage, visit:
+      https://schmitt-nieto.com/blog/azure-local-demolab/
+#>
+
+[CmdletBinding()]
+param(
+    [string]$TfvarsPath = (Join-Path -Path $PSScriptRoot -ChildPath 'terraform.tfvars'),
+    [string]$EnvPath    = (Join-Path -Path $PSScriptRoot -ChildPath '..\scripts\01Lab\.env'),
+    [string]$TenantId
+)
+
+$ErrorActionPreference = 'Stop'
+
+function Get-KvValue {
+    param([string]$Content, [string]$Key)
+
+    $match = [regex]::Match($Content, "(?m)^\s*$([regex]::Escape($Key))\s*=\s*(.+?)\s*$")
+    if (-not $match.Success) { return $null }
+
+    $value = $match.Groups[1].Value.Trim()
+    # Strip one layer of surrounding single or double quotes
+    if ($value.Length -ge 2 -and
+        (($value.StartsWith('"') -and $value.EndsWith('"')) -or
+         ($value.StartsWith("'") -and $value.EndsWith("'")))) {
+        $value = $value.Substring(1, $value.Length - 2)
+    }
+    return $value
+}
+
+# --- Azure CLI present ------------------------------------------------------
+if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
+    throw "Azure CLI (az) was not found on PATH. Install it from https://aka.ms/installazurecli and retry."
+}
+
+# --- Service principal and subscription from terraform.tfvars ---------------
+if (-not (Test-Path -Path $TfvarsPath)) {
+    throw "terraform.tfvars not found at '$TfvarsPath'. Copy terraform.tfvars.example to terraform.tfvars and fill it in first."
+}
+$tfvars = Get-Content -Path $TfvarsPath -Raw
+
+$appId          = Get-KvValue -Content $tfvars -Key 'service_principal_id'
+$secret         = Get-KvValue -Content $tfvars -Key 'service_principal_secret'
+$subscriptionId = Get-KvValue -Content $tfvars -Key 'subscription_id'
+
+# --- Tenant id from scripts/01Lab/.env (same SPN) or -TenantId override ------
+if ([string]::IsNullOrWhiteSpace($TenantId)) {
+    if (-not (Test-Path -Path $EnvPath)) {
+        throw "Tenant id not provided and 01Lab .env not found at '$EnvPath'. Pass -TenantId, or set AZSHCI_TENANT_ID in scripts\01Lab\.env."
+    }
+    $envContent = Get-Content -Path $EnvPath -Raw
+    $TenantId   = Get-KvValue -Content $envContent -Key 'AZSHCI_TENANT_ID'
+}
+
+# --- Validate ---------------------------------------------------------------
+$missing = @()
+if ([string]::IsNullOrWhiteSpace($appId))          { $missing += 'service_principal_id (terraform.tfvars)' }
+if ([string]::IsNullOrWhiteSpace($secret))         { $missing += 'service_principal_secret (terraform.tfvars)' }
+if ([string]::IsNullOrWhiteSpace($subscriptionId)) { $missing += 'subscription_id (terraform.tfvars)' }
+if ([string]::IsNullOrWhiteSpace($TenantId))       { $missing += 'AZSHCI_TENANT_ID (scripts\01Lab\.env) or -TenantId' }
+if ($missing.Count -gt 0) {
+    throw "Missing or empty value(s): $($missing -join ', ')."
+}
+
+if ($secret -like 'TODO*' -or $appId -like '0000*' -or $subscriptionId -like '0000*' -or $TenantId -like '0000*') {
+    throw "terraform.tfvars or .env still contains placeholder values. Fill in the real SPN, tenant and subscription before running this script."
+}
+
+# --- Clean login ------------------------------------------------------------
+Write-Host "Clearing any cached Azure CLI session for a clean login..." -ForegroundColor Cyan
+az account clear 2>$null | Out-Null
+
+Write-Host "Logging in as service principal $appId in tenant $TenantId..." -ForegroundColor Cyan
+az login --service-principal --username $appId --password $secret --tenant $TenantId --only-show-errors | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "az login failed. Verify service_principal_id / service_principal_secret in terraform.tfvars and AZSHCI_TENANT_ID in scripts\01Lab\.env."
+}
+
+Write-Host "Setting active subscription to $subscriptionId..." -ForegroundColor Cyan
+az account set --subscription $subscriptionId --only-show-errors
+if ($LASTEXITCODE -ne 0) {
+    throw "az account set failed. Confirm the service principal has access to subscription $subscriptionId in tenant $TenantId."
+}
+
+Write-Host ""
+Write-Host "Active Azure context (verify tenant and subscription below match the lab):" -ForegroundColor Green
+az account show --query "{subscription:name, subscriptionId:id, tenantId:tenantId, user:user.name}" --output table
+Write-Host ""
+Write-Host "Clean login complete. You can now run terraform plan / terraform apply in this folder." -ForegroundColor Green

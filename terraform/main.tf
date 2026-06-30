@@ -52,6 +52,25 @@ import {
 }
 
 # ---------------------------------------------------------------------------
+# Import block for the existing resource provider role assignment.
+#
+# service_principal_role_assign (ACMRM, "Azure Connected Machine Resource
+# Manager" for the Microsoft.AzureStackHCI RP service principal) may already
+# exist in Azure when a previous deployment was torn down without terraform
+# destroy. The host-only scripts/01Lab/99_Offboarding.ps1 removes only the
+# Hyper-V VMs and networking, not Azure RBAC, so the assignment survives and
+# the next apply fails with 409 RoleAssignmentExists.
+# Populate import_service_principal_role_assignment_ids with the GUID from the
+# 409 error (key "ACMRM"), run terraform apply, then reset the variable to {}.
+# ---------------------------------------------------------------------------
+
+import {
+  for_each = var.enable_cluster_module ? var.import_service_principal_role_assignment_ids : {}
+  id       = "/subscriptions/${var.subscription_id}/resourceGroups/${var.resource_group_name}/providers/Microsoft.Authorization/roleAssignments/${each.value}"
+  to       = module.azure_local_cluster[0].azurerm_role_assignment.service_principal_role_assign[each.key]
+}
+
+# ---------------------------------------------------------------------------
 # Data sources
 # ---------------------------------------------------------------------------
 

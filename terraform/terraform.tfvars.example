@@ -171,6 +171,13 @@ import_deployment_settings = false
 # Keys: "<SERVER>_DMR" and "<SERVER>_INFRA". Values: GUIDs from the error output.
 import_machine_rg_role_assignment_ids = {}
 
+# Populate when the resource provider role assignment (ACMRM, "Azure Connected
+# Machine Resource Manager") already exists in Azure but is not in state, which
+# happens when a deployment was torn down without terraform destroy. The host-only
+# 99_Offboarding.ps1 does not remove Azure RBAC. Key: "ACMRM". Value: the GUID from
+# the 409 RoleAssignmentExists error.
+import_service_principal_role_assignment_ids = {}
+
 # ---------------------------------------------------------------------------
 # Deployment mode — see flow at the top of this file
 #
