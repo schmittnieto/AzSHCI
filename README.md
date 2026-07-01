@@ -936,7 +936,7 @@ See the [Terraform Deployment](#terraform-deployment) section below for full det
 
 ## CI/CD: GitHub Actions
 
-`.github/workflows/copy-to-blog.yml` runs on every push to `main`. It checks out both this repository and `schmittnieto/schmittnieto.github.io`, then rsync-copies the repo contents to `/assets/repo/AzSHCI/` in the blog repository and pushes the result. It also purges Camo image caches. Requires a `GH_PAT` repository secret with write access to the blog repo.
+`.github/workflows/copy-to-blog.yml` runs on every push to `main`. It checks out both this repository and `schmittnieto/schmittnieto.github.io`, then mirrors the repo contents into `/assets/repo/AzSHCI/` in the blog repository with `rsync --delete`, so files removed or renamed here are also removed there. The mirrored subtree is force-added before committing so the blog repository's own broad `scripts/` gitignore rule does not drop new files such as `scripts/01Lab/.env.example` and `Set-LabEnv.ps1`. Files that are gitignored in this repository (secrets like `scripts/01Lab/.env`, `terraform/terraform.tfvars` and `Context/`) are never checked out, so they are never mirrored. It also purges Camo image caches. Requires a `GH_PAT` repository secret with write access to the blog repo.
 
 ---
 

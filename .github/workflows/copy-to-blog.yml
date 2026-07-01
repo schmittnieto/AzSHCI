@@ -22,18 +22,31 @@ jobs:
       - name: Purge Camo Images
         uses: kevincobain2000/action-camo-purge@v1
 
-      - name: Copy Files
+      - name: Copy Files (mirror)
         run: |
           SOURCE_DIR="${{ github.workspace }}"
           DEST_DIR="${{ github.workspace }}/blog_destination/assets/repo/AzSHCI"
           mkdir -p "$DEST_DIR"
-          rsync -av --exclude='.git' --exclude='blog_destination' "$SOURCE_DIR/" "$DEST_DIR/"
+          # --delete makes this a true mirror: files removed or renamed in the
+          # source are also removed from the destination (e.g. stale 02.1_Cluster.ps1).
+          rsync -av --delete \
+            --exclude='.git' \
+            --exclude='blog_destination' \
+            "$SOURCE_DIR/" "$DEST_DIR/"
 
       - name: Commit and Push Changes
         working-directory: blog_destination
         run: |
           git config user.name "schmittnieto"
           git config user.email "cristian@schmitt-nieto.com"
-          git add .
-          git commit -m "Update files from AzSHCI repository"
-          git push origin main
+          # Force-add the mirrored subtree. The blog repo .gitignore has a broad
+          # "scripts/" rule that would otherwise skip new files under
+          # assets/repo/AzSHCI/scripts/ (for example .env.example and Set-LabEnv.ps1).
+          # --all also stages the deletions produced by the rsync --delete mirror.
+          git add --all --force -- assets/repo/AzSHCI
+          if git diff --cached --quiet; then
+            echo "No changes to sync."
+          else
+            git commit -m "Update files from AzSHCI repository"
+            git push origin main
+          fi
