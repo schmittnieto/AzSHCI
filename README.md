@@ -27,6 +27,13 @@ For a detailed walkthrough, visit: https://schmitt-nieto.com/blog/azure-local-de
   - [01Lab: Initial Lab Deployment](#01lab-initial-lab-deployment)
   - [02Day2: Day-Two Operations](#02day2-day-two-operations)
   - [03VMDeployment: VM Access](#03vmdeployment-vm-access)
+  - [04AVD: Entra Joined Virtual Desktops](#04avd-entra-joined-virtual-desktops)
+    - [Getting started with AVD](#getting-started-with-avd)
+    - [Managing an existing deployment](#managing-an-existing-deployment)
+    - [Guest-script library](#guest-script-library)
+    - [Tracking and troubleshooting](#tracking-and-troubleshooting)
+    - [Experimental FSLogix share on the DC](#experimental-fslogix-share-on-the-dc)
+    - [Validation status](#validation-status)
 - [Terraform Deployment](#terraform-deployment)
   - [Pre-requisites before running Terraform](#pre-requisites-before-running-terraform)
   - [What it creates](#what-it-creates)
@@ -51,6 +58,7 @@ For a detailed walkthrough, visit: https://schmitt-nieto.com/blog/azure-local-de
   - [4b. Deploy the cluster with Terraform (optional)](#4b-deploy-the-cluster-with-terraform-optional-alternative-to-the-portal)
   - [5. Day-2 operations](#5-day-2-operations)
   - [6. VM access](#6-vm-access)
+  - [6b. Virtual desktops](#6b-virtual-desktops)
   - [7. Teardown](#7-teardown)
 - [CI/CD: GitHub Actions](#cicd-github-actions)
 - [Safety and Security Notes](#safety-and-security-notes)
@@ -95,8 +103,13 @@ AzSHCI/
 │   │       ├── 11_AzSHCIImageBuilder_v5.ps1
 │   │       ├── 11_ImageBuilderAzSHCI_v6.ps1
 │   │       └── 11_ImageBuilderAzSHCI_v7.ps1
-│   └── 03VMDeployment/
-│       └── 20_SSHRDPArcVM.ps1         # SSH/RDP to Arc-managed VMs
+│   ├── 03VMDeployment/
+│   │   └── 20_SSHRDPArcVM.ps1         # SSH/RDP to Arc-managed VMs
+│   └── 04AVD/
+│       ├── 30_AVDAzureLocal.ps1       # AVD deployment and management on Azure Local
+│       ├── 31_FSLogixFileShare.ps1    # Experimental DC-hosted profile share
+│       ├── fslogix.env               # Generated credentials (gitignored)
+│       └── SessionHostScripts/       # Tasks 00-12 and Common.ps1
 ├── terraform/
 │   ├── modules/
 │   │   └── azurelocal/                # Local fork of AVM module (see Terraform section)
@@ -116,6 +129,7 @@ Each folder under `scripts/` covers a distinct lifecycle phase:
 - **01Lab**: Initial infrastructure build, networking, VM creation, domain promotion, Arc registration and full teardown.
 - **02Day2**: Ongoing operations, lab start/stop, image management, AKS Arc access, disk optimization.
 - **03VMDeployment**: Remote access to workload VMs running on top of the Azure Local cluster.
+- **04AVD**: Entra-joined AVD deployment and management, guest configuration, scaling, maintenance and experimental local FSLogix storage.
 
 The `terraform/` folder provides an Infrastructure-as-Code alternative to the manual portal deployment step. It uses a local fork of the [Azure Verified Module for Azure Local](https://github.com/Azure/terraform-azurerm-avm-res-azurestackhci-cluster) (see the [Local module fork](#local-module-fork) section) to deploy the cluster after the node has been registered with Arc by `02_Cluster.ps1`.
 
@@ -422,26 +436,27 @@ Once all extensions are confirmed `Succeeded`, the script applies a **LcmControl
 
 ### 02Day2: Day-Two Operations
 
-#### 1. `10_StartStopAzSHCI.ps1`, Ordered lab start/stop
+#### 1. `10_StartStopAzSHCI.ps1`, Graceful lab startup and shutdown
 
-Prompts for `start` or `stop` at runtime.
+Run this script as administrator on the outer Hyper-V host. It manages the **single-node nested lab**, including the optional domain controller and discovered workload VMs.
 
-**Stop sequence** (safe cluster shutdown):
-1. Connects to `AZLN01` and runs `Stop-Cluster -Force`.
-2. Shuts down `AZLN01`.
-3. Shuts down `DC`.
+```powershell
+.\scripts\02Day2\10_StartStopAzSHCI.ps1 -Action Start
+.\scripts\02Day2\10_StartStopAzSHCI.ps1 -Action Stop
 
-**Start sequence**:
-1. Starts `DC` and waits 120 seconds for AD/DNS services.
-2. Starts `AZLN01` and waits 60 seconds.
-3. Connects to `AZLN01` and runs `Start-Cluster` followed by `Sync-AzureStackHCI`.
+# Apply persistent shutdown/startup policies without changing VM power state
+.\scripts\02Day2\10_StartStopAzSHCI.ps1 -Action Configure
+```
 
-Sleep timers can be skipped by pressing Spacebar.
+**Stop** shuts down workload guests before stopping the cluster and node, then stops the DC last. It configures guest shutdown instead of saved-state suspension in both Hyper-V and clustered VM policies. This addresses saved-state problems encountered with virtual TPMs in the nested lab; it does not repair an existing key-protector failure.
 
-Key variables to adjust: `$netBIOSName`, `$hcipassword`, `$dcPassword`, `$SleepDCStart`, `$SleepNodeStart`.
+**Start** starts the DC and node, waits for services and cluster storage, then brings all discovered guests online, including generated Arc Resource Bridge/AKS VMs and guests that were previously Off. Offline cluster roles are retained even when their VM configuration is temporarily unregistered from Hyper-V. After guest startup, the script runs `Sync-AzureStackHCI`; Azure portal inventory can take additional time to converge.
+
+The node uses the LCM account from the lab `.env`, while DC authentication uses `AZSHCI_DEFAULT_ADMIN_USER` and its password. Explicit `-NodeCredential` and `-DCCredential` values override those defaults. `-SkipDC` supports a lab without a DC. Recently started VMs receive bounded authentication recovery, with a secure replacement-credential prompt if needed.
+
+Progress includes persistent wait messages as well as PowerShell progress bars. Percentages represent elapsed timeout budget, not measured boot completion. `-TimeoutMinutes` controls the bounded waits. Policy snapshots are saved under `%LOCALAPPDATA%\AzSHCI\PowerLifecycle`. A failed prerequisite stops dependent power operations; the script does not discard saved states or force-power-off guests.
 
 ---
-
 #### 2. `11_ImageBuilderAzSHCI.ps1` and `11_ImageBuilderAL.ps1`, Azure Marketplace image downloader
 
 Both scripts automate pulling VM images from Azure Marketplace into the Azure Local cluster storage. `11_ImageBuilderAL.ps1` is the optimized variant. Both share the same core workflow:
@@ -538,6 +553,133 @@ Key variable to adjust: `$LocalUser` (the local user account on the target VM; d
 
 ---
 
+### 04AVD: Entra Joined Virtual Desktops
+
+[`30_AVDAzureLocal.ps1`](scripts/04AVD/30_AVDAzureLocal.ps1) deploys and manages Azure Virtual Desktop on an existing Azure Local instance. It supports **pooled** desktops shared by multiple users and **personal** desktops assigned to individual users. Session hosts join Microsoft Entra ID; the host pool, desktop application group and workspace are managed in Azure.
+
+#### Getting started with AVD
+
+Run from the repository root:
+
+```powershell
+.\scripts\04AVD\30_AVDAzureLocal.ps1
+```
+
+Before starting, have a deployed Azure Local instance, custom location, workload logical network, storage container and sufficient VM capacity. The network must provide IP allocation, DNS and outbound AVD/Entra connectivity. Select a generalized Windows generation 2 image appropriate to the pool type; pooled hosts use Windows Enterprise multi-session. Custom images must not already be domain joined or contain registered AVD agents. The script offers Marketplace image import when needed.
+
+The operator machine needs `Az.Accounts`, `Az.Resources`, `Az.Compute` and `Az.ConnectedMachine`; the script offers to install missing modules. Existing sign-in and lab `.env` configuration can be reused. Supported Azure Local, guest OS, licensing and connectivity requirements should be checked against the current [Microsoft AVD on Azure Local documentation](https://learn.microsoft.com/en-us/azure/virtual-desktop/azure-local-overview).
+
+A typical new deployment follows this sequence:
+
+1. Confirm the account and select the subscription.
+2. Choose **New deployment**, then select infrastructure placement: resource group, custom location, workload network and storage container.
+3. Select the AVD metadata region and target resource group, pool type and image. The metadata region does not relocate the VMs out of Azure Local.
+4. Review suggested resource names, the `sh-` session-host prefix, host count, CPU, RAM and applicable session limits.
+5. Select users/groups, review the configuration and enter the local VM administrator password securely.
+6. Follow core-resource deployment, VM provisioning, Entra join and agent registration through to session-host availability.
+
+The infrastructure logical network is marked and placed after workload networks. Suggested names remain editable. Required Azure permissions and relevant Microsoft Graph access are checked, with an alternate authorized account offered for missing grants. Creating resource groups requires subscription permissions; Graph application consent is separate from Azure resource-group permissions.
+
+#### Managing an existing deployment
+
+Choose **Adjust an existing deployment** after sign-in. This option remains available even when the initial discovery list is empty. Refresh subscription discovery or search a selected resource group to find the pool. Restricted access to related resources is distinguished from a confirmed empty result.
+
+| Operation | What it does |
+|---|---|
+| Inspect deployment | Show linked resources, session-host status, available vCPU/RAM and local run history |
+| Run selected guest scripts | Configure one, several or all hosts using Azure Arc Run Command |
+| Add session hosts | Expand the pool while preserving existing pool settings and naming conventions |
+| Host-pool properties | Adjust session limits, RDP properties, Shortpath and workspace/desktop friendly names |
+| Start VM on Connect | Configure the feature and its required permissions |
+| Scaling Plans | Create, inspect, enable or disable pooled/personal plans with day selection |
+| Maintenance | Prepare blue/green updates, coordinate autoscale and switch admission for new sessions |
+| Remove session hosts | Delete selected VM/Arc resources, AVD registrations and verified Entra device records |
+| Remove complete host pool | Review the pool and associated resources, with optional NIC/disk and empty-RG cleanup |
+
+The pooled savings configuration uses DepthFirst and only shuts down hosts without sessions, preserving disconnected sessions. Actual shutdown timing depends on autoscale evaluation. Maintenance switching changes new-session admission; it does not migrate existing sessions. Scheduled maintenance waits in the foreground, so the PowerShell process and authenticated session must remain available.
+
+Removal collects permissions and resource selections before one final typed `DELETE` confirmation. Session checks, identity verification and shared-resource checks still apply. Optional NIC/disk deletion can permanently remove data. A host being offline does not by itself authorize discarding its sessions. Incomplete operations retain their tracking state.
+
+#### Guest-script library
+
+The menu identifies each script and explains its system changes before collecting settings. Select several tasks with comma-separated numbers and select `A` to target every discovered host. A restart can follow each task, with an additional final restart if requested. The runner waits for power-operation completion and Arc readiness before continuing.
+
+| File under `SessionHostScripts/` | Purpose |
+|---|---|
+| `00_Set-FSLogixProfile.ps1` | Install/configure profile containers for an existing share; optional experimental SYSTEM credentials |
+| `01_Set-RegionalSettings.ps1` | Language, country/region, time zone and default-user settings |
+| `02_Install-BgInfo.ps1` | Install BGInfo with a verified default or supplied layout and logon startup |
+| `03_Set-AgentStagingPermission.ps1` | Restrict a dedicated staging directory to SYSTEM and Administrators |
+| `04_Update-AVDAgent.ps1` | Update registered AVD Agent and Boot Loader components |
+| `05_Set-EntraKerberosSettings.ps1` | Configure Windows policies and optional supporting services |
+| `06_Set-AvdHostPolicies.ps1` | Clipboard, capture, session limits, Edge and Shortpath policies |
+| `07_Set-SessionHostExperience.ps1` | Explorer, Office and OneDrive behaviour |
+| `08_Set-NetworkOverrides.ps1` | DNS suffixes and explicit hosts-file entries |
+| `09_Install-WinGetApplications.ps1` | Install or update approved applications |
+| `10_Install-WindowsUpdates.ps1` | Apply applicable updates without an automatic reboot |
+| `11_Restart-AvdAgent.ps1` | Restart the AVD agent boot-loader service |
+| `12_Set-LocalAdministrator.ps1` | Add or remove explicit local administrator membership |
+
+[`Common.ps1`](scripts/04AVD/SessionHostScripts/Common.ps1) supplies shared helpers and is not a task to execute independently. Standalone guest scripts belong on the **target session host**; running them on the operator machine would configure that machine instead.
+
+The staging directory defaults to `%ProgramData%\AzSHCI\AVD`, resolved on each guest, and must already exist. Language installation may require a restart and a second Regional invocation. The optional Device Setup Region change is a community registry adjustment. Entra Kerberos policies alone do not establish SMB authentication. Local-profile deletion is opt-in.
+
+#### Tracking and troubleshooting
+
+History defaults to `%LOCALAPPDATA%\AVDEntraJoin\runs`. Use the actual `run.json` path printed by your operation:
+
+```powershell
+.\scripts\04AVD\30_AVDAzureLocal.ps1 -Monitor `
+    'C:\Users\<operator>\AppData\Local\AVDEntraJoin\runs\<run>\run.json'
+```
+
+Replace the placeholders. Monitoring observes saved work; it does not blindly resubmit failed configuration or deletion. Guest completion requires command state, exit code, a structured result and a completion marker. Eligible completed Run Commands are archived and removed to avoid the per-machine command limit.
+
+| Symptom | What to check |
+|---|---|
+| Empty host-pool list | Confirm subscription, refresh discovery, search the resource group and inspect discovery rights |
+| Infrastructure succeeded but host is unavailable | Check guest registration results, Arc connectivity and AVD agent health |
+| Command cannot run immediately after reboot | Allow the Windows/Arc settling and readiness checks to finish |
+| Regional task reports deferred language settings | Restart and rerun Regional, then verify with a fresh user profile |
+| FSLogix reports error 1326 in the experimental setup | Check whether the log still says user-context access; a UNC path alone does not import SYSTEM credentials |
+
+A successful task is not always end-user acceptance: BGInfo needs a new logon, FSLogix needs a real profile sign-in and updates need a host-health check. Use `-Verbose` for additional diagnostic detail.
+
+#### Experimental FSLogix share on the DC
+
+[`31_FSLogixFileShare.ps1`](scripts/04AVD/31_FSLogixFileShare.ps1) provides a **lab-only** way to evaluate local profile storage with cloud-only desktop users. It creates a dedicated non-administrator AD storage account, a directory and a restricted encrypted SMB share on the domain controller.
+
+```powershell
+# From the outer Hyper-V lab host, using PowerShell Direct
+.\scripts\04AVD\31_FSLogixFileShare.ps1
+
+# Alternatively, reach a DC through WinRM with explicit credentials
+.\scripts\04AVD\31_FSLogixFileShare.ps1 `
+    -ComputerName 'dc01.example.test' -DCCredential (Get-Credential)
+```
+
+The script reviews changes before typed `CREATE`, refuses existing target objects and retains partial work for recovery. It generates `scripts/04AVD/fslogix.env`, containing the share settings and a random plaintext password, with a restrictive Windows ACL. The file is excluded from Git. Protect copies and rotate the account password before expiry; rotation is not automated.
+
+Once the file is Ready, reopen the AVD management script, select the FSLogix guest task and explicitly accept **experimental SYSTEM credentials from fslogix.env**. Settings are sent using protected Arc parameters and imported through the Windows Credential API. No guest env file is created by this menu path. Base64 is transport encoding, not encryption. The ordinary per-user mode remains available and only uses the detected share as its default UNC value.
+
+For standalone execution, securely stage the env file on the session host and run **as SYSTEM**:
+
+```powershell
+.\00_Set-FSLogixProfile.ps1 -ExperimentalSystemCredentials $true `
+    -ExperimentalEnvPath 'C:\SecureStaging\fslogix.env'
+```
+
+Remove the staged copy after successful import. Credential Guard is left unchanged. Preserve existing local profile data before enabling any profile-deletion option.
+
+This mode uses a shared storage identity and `AccessNetworkAsComputerObject=1`. Desktop users remain cloud-only, but the backing account on the DC is an AD account. This is neither native per-user Entra SMB authorization nor an AD-less storage solution. SYSTEM/administrators and holders of that credential can access the containers granted to it. Hosting profiles on a DC is intended for this experiment, not production deployment.
+
+#### Validation status
+
+A lab run reached two Available hosts, verified sixteen guest-task executions and completed ten restarts. A subsequent FSLogix log confirmed VHDX creation, attachment and profile redirection; the operator also confirmed that the tested Entra-only user could not list the backing share. That satisfies the limited lab viability test, not a comprehensive security or production-support assessment.
+
+Offline checks covered PowerShell 5.1/7 syntax and selected discovery, lifecycle, removal and configuration paths. Live autoscale, blue/green switching, the latest full-removal flow and broader FSLogix cross-host reuse, credential rotation and recovery require further validation. Review the exact changes and prerequisites for your environment before execution.
+
+---
 ## Terraform Deployment
 
 > **Proof of concept - validated end-to-end.** The Terraform path has been successfully used to complete a full Azure Local deployment on this lab configuration and serves as a supported alternative to the Azure portal wizard. The current recommended workflow is a **two-stage deployment**: first `Validate` (`is_exported = false`), then `Deploy` (`is_exported = true`). It is included here to validate the IaC approach alongside the PowerShell scripts. When the implementation reaches a stable state, it will be extracted to a **dedicated repository** with a proper operational framework: remote state backend, modular pipeline structure, and full Day-2 lifecycle coverage.
@@ -809,6 +951,8 @@ Set this to `false` before `terraform destroy` if the Arc node was manually dele
 
 | Dependency | Required by |
 |---|---|
+| `Az.Accounts`, `Az.Resources`, `Az.Compute`, `Az.ConnectedMachine` | AVD deployment and guest operations |
+| `ActiveDirectory`, `SmbShare` on the target DC; Hyper-V PowerShell Direct or WinRM on the operator machine | Experimental FSLogix share creator |
 | `Az.Accounts`, `Az.Compute`, `Az.Resources`, `Az.CustomLocation` | Image builder scripts |
 | `Az.Compute`, `Az.StackHCI`, `Az.ConnectedMachine` | `03_TroubleshootingExtensions.ps1` |
 | `Az.Compute`, `Az.ConnectedMachine` | `20_SSHRDPArcVM.ps1` |
@@ -925,6 +1069,10 @@ See the [Terraform Deployment](#terraform-deployment) section below for full det
 .\scripts\03VMDeployment\20_SSHRDPArcVM.ps1
 ```
 
+### 6b. Virtual desktops
+
+Run `.\scripts\04AVD\30_AVDAzureLocal.ps1` after the cluster is deployed. See [04AVD](#04avd-entra-joined-virtual-desktops) for prerequisites, guest tasks and the optional FSLogix experiment. For desktop-only removal, use the existing-deployment menu rather than full lab offboarding.
+
 ### 7. Teardown
 
 ```powershell
@@ -952,7 +1100,7 @@ See the [Terraform Deployment](#terraform-deployment) section below for full det
 
 ## Roadmap
 
-- Additional end-to-end automation scenarios (AVD on Azure Local, AKS Arc lifecycle).
+- Broader AVD autoscale, maintenance and recovery validation, plus AKS Arc lifecycle scenarios.
 - Multi-node lab variant (two HCI nodes).
 - Automated post-deployment validation checks.
 - **Dedicated Terraform repository**: once the IaC proof of concept in `terraform/` is stable, it will be extracted to a separate repository with a full operational framework: remote state backend (Azure Blob Storage), modular pipeline structure, and Day-2 lifecycle operations (upgrades, node management, monitoring).

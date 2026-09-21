@@ -19,8 +19,17 @@ Packages/
 # Local project context and memory (never synced)
 Context/
 
+# MOC / Arc Resource Bridge article scripts (unpublished draft)
+scripts/05_MOCARB/
+
 # 01Lab session configuration (never synced; holds secrets)
 scripts/01Lab/.env
 
 # Terraform SPN login helper (never synced)
 terraform/Connect-Spn.ps1
+
+# Unfinished AKS / FSLogix experiment (retain locally)
+scripts/04AVD/31_AKSFSLogixAzureLocal.ps1
+
+# Experimental FSLogix credentials (never publish)
+**/fslogix.env
