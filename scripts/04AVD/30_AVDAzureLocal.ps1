@@ -32,7 +32,7 @@
     .\scripts\04AVD\30_AVDAzureLocal.ps1 -Monitor "$env:LOCALAPPDATA\AVDEntraJoin\runs\<run>\run.json"
 .NOTES
     Designed for the Azure Local lab maintained by Cristian Schmitt Nieto.
-    https://schmitt-nieto.com/blog/azure-local-demolab/
+    https://schmitt-nieto.com/blog/azure-local-avd-entra-join/
 #>
 [CmdletBinding()]
 param(
