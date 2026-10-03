@@ -13,7 +13,7 @@
     - Configures network adapters with static IP settings.
     - Sets the time zone.
     - Promotes the VM to a Domain Controller.
-    - Installs Windows Updates.
+    - Installs Windows Updates and waits until the DC is back up after the restart.
     - Configures DNS forwarders.
     - Creates Organizational Units (OUs) in Active Directory.
     - Installs necessary modules and creates Azure Local AD objects.
@@ -59,7 +59,7 @@ $setupPwd = $env:AZSHCI_DC_LCM_PASSWORD
 # Sleep durations in seconds
 $SleepRename = [int]$env:AZSHCI_DC_SLEEP_RENAME     # Sleep Timer for after PC Renaming
 $SleepDomain = [int]$env:AZSHCI_DC_SLEEP_DOMAIN    # Sleep Timer for after Domain Making
-$SleepUpdates = [int]$env:AZSHCI_DC_SLEEP_UPDATES   # Sleep Timer for after Update Installation
+$SleepUpdates = [int]$env:AZSHCI_DC_SLEEP_UPDATES   # Time the DC must stay up after the update restart before the script continues
 # $SleepADServices = 30 # Increased Sleep Timer after DC promotion before configuring AD
 
 # Total number of steps for progress calculation
@@ -161,6 +161,68 @@ function Wait-UntilADReady {
     }
 
     Write-Message "Active Directory services did not become operational within the expected time." -Type "Error"
+    exit 1
+}
+
+# Function to Restart a VM and Wait Until It Is Back and Stable
+# A cumulative update can restart the guest twice: once to install and once more
+# from TrustedInstaller on the first boot. AD answers in between, so the VM must
+# stay up on the same boot for $SettleSeconds before the script trusts it.
+function Restart-VMAndWaitStable {
+    param(
+        [string]$VMName,
+        [int]$SettleSeconds = 240,
+        [int]$Timeout = 2700 # Timeout in seconds (45 minutes)
+    )
+
+    $bootBefore = Invoke-Command -VMName $VMName -Credential $DomainAdminCredentials -ScriptBlock {
+        (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
+    } -ErrorAction Stop
+
+    # shutdown.exe returns at once, so this session closes before the guest goes down
+    Invoke-Command -VMName $VMName -Credential $DomainAdminCredentials -ScriptBlock {
+        shutdown.exe /r /t 5 /c "01_DC.ps1: restart to finish Windows Updates"
+        if ($LASTEXITCODE -ne 0) { throw "shutdown.exe failed with exit code $LASTEXITCODE" }
+    } -ErrorAction Stop | Out-Null
+    Write-Message "VM '$VMName' is restarting to finish the updates..." -Type "Info"
+
+    $elapsed = 0
+    $interval = 15
+    $currentBoot = $null
+    $upSince = 0
+
+    while ($elapsed -lt $Timeout) {
+        Start-Sleep -Seconds $interval
+        $elapsed += $interval
+
+        try {
+            # Boot time of the running OS, read only once AD answers
+            $boot = Invoke-Command -VMName $VMName -Credential $DomainAdminCredentials -ScriptBlock {
+                Get-ADDomain -ErrorAction Stop | Out-Null
+                (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
+            } -ErrorAction Stop -WarningAction SilentlyContinue
+        } catch {
+            # Shutting down, booting or AD still starting
+            continue
+        }
+
+        # The restart has not happened yet
+        if ($boot -le $bootBefore) { continue }
+
+        if ($boot -ne $currentBoot) {
+            if ($currentBoot) {
+                Write-Message "VM '$VMName' restarted again to finish servicing." -Type "Warning"
+            }
+            $currentBoot = $boot
+            $upSince = $elapsed
+            Write-Message "VM '$VMName' is back up. Checking that it stays up for $SettleSeconds seconds..." -Type "Info"
+        } elseif (($elapsed - $upSince) -ge $SettleSeconds) {
+            Write-Message "VM '$VMName' is up and Active Directory is answering." -Type "Success"
+            return
+        }
+    }
+
+    Write-Message "VM '$VMName' did not come back and stay up within $Timeout seconds." -Type "Error"
     exit 1
 }
 
@@ -408,7 +470,7 @@ $currentStep++
 Update-ProgressBar -CurrentStep $currentStep -TotalSteps $totalSteps -StatusMessage "Installing Windows Updates..."
 Write-Message "Installing Windows Updates on VM '$dcVMName'..." -Type "Info"
 try {
-    Invoke-Command -VMName $dcVMName -Credential $DomainAdminCredentials -ScriptBlock {
+    $rebootRequired = Invoke-Command -VMName $dcVMName -Credential $DomainAdminCredentials -ScriptBlock {
         $ErrorActionPreference = 'Stop'
         $WarningPreference = 'SilentlyContinue'
         $VerbosePreference = 'SilentlyContinue'
@@ -419,15 +481,21 @@ try {
         Install-Module PSWindowsUpdate -Force -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
         Import-Module PSWindowsUpdate -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
 
-        # Install available updates
-        Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -AutoReboot -IgnoreReboot -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
-    } -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Out-Null
+        # Install available updates without restarting. The host restarts the VM
+        # afterwards, so it knows when the restart happens and can wait for it.
+        Install-WindowsUpdate -MicrosoftUpdate -AcceptAll -IgnoreReboot -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
 
-    Write-Message "Windows Updates installation initiated on VM '$dcVMName'." -Type "Success"
+        # Report whether the installed updates need a restart
+        Get-WURebootStatus -Silent
+    } -ErrorAction Stop -WarningAction SilentlyContinue -Verbose:$false | Select-Object -Last 1
 
-    # Wait for the DC VM to restart after updates
-    Write-Message "Waiting for the Domain Controller to restart after updates..." -Type "Info"
-    Start-SleepWithProgress -Seconds $SleepUpdates -Activity "Waiting for VM to restart" -Status "Waiting for VM to restart and apply updates" # 240 Seconds (4 Minutes)
+    Write-Message "Windows Updates installed on VM '$dcVMName'." -Type "Success"
+
+    if ($rebootRequired) {
+        Restart-VMAndWaitStable -VMName $dcVMName -SettleSeconds $SleepUpdates
+    } else {
+        Write-Message "No restart needed after the updates on VM '$dcVMName'." -Type "Info"
+    }
 } catch {
     Write-Message "Failed to install Windows Updates on VM '$dcVMName'. Error: $_" -Type "Error"
     exit 1
