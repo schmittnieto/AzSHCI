@@ -314,20 +314,44 @@ function Test-TPM {
 }
 
 function Test-HyperV {
-    try {
-        $feature = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -ErrorAction Stop
-        if ($feature.State -eq "Enabled") {
-            Write-Message "Hyper-V role already installed." -Type Success
-            return
+    # Detect Hyper-V through what the lab actually uses: the VMMS service and the Hyper-V module.
+    # The DISM based feature cmdlets can hang or fail with "Class not registered" on Windows
+    # Server Insider builds even when the role is installed, so they are only used to install.
+    $vmms     = Get-Service -Name vmms -ErrorAction SilentlyContinue
+    $hvModule = Get-Module -ListAvailable -Name Hyper-V
+    if ($vmms -and $hvModule) {
+        if ($vmms.Status -ne 'Running') {
+            Write-Message "Hyper-V is installed but the VMMS service is $($vmms.Status). Starting it..." -Type Warning
+            try {
+                Start-Service -Name vmms -ErrorAction Stop
+            } catch {
+                Write-Message "Failed to start the VMMS service. $($_)" -Type Error
+                exit 1
+            }
         }
-        Write-Message "Installing Hyper-V role and management tools..." -Type Info
-        Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All -NoRestart -ErrorAction Stop | Out-Null
-        Write-Message "Hyper-V installed. Please reboot and run the script again." -Type Warning
-        exit 0
-    } catch {
-        Write-Message "Failed to install Hyper-V. $($_)" -Type Error
-        exit 1
+        Write-Message "Hyper-V role already installed." -Type Success
+        return
     }
+
+    Write-Message "Installing Hyper-V role and management tools..." -Type Info
+    $isServer = (Get-CimInstance -ClassName Win32_OperatingSystem).ProductType -ne 1
+    try {
+        if ($isServer) {
+            Install-WindowsFeature -Name Hyper-V -IncludeManagementTools -ErrorAction Stop | Out-Null
+        } else {
+            Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V -All -NoRestart -ErrorAction Stop | Out-Null
+        }
+    } catch {
+        Write-Message "Feature cmdlets failed ($($_.Exception.Message)). Falling back to dism.exe..." -Type Warning
+        & dism.exe /Online /Enable-Feature /FeatureName:Microsoft-Hyper-V /FeatureName:Microsoft-Hyper-V-Management-PowerShell /All /NoRestart /Quiet
+        # 3010 = success, restart required
+        if ($LASTEXITCODE -notin 0, 3010) {
+            Write-Message "Failed to install Hyper-V. dism.exe exit code $LASTEXITCODE." -Type Error
+            exit 1
+        }
+    }
+    Write-Message "Hyper-V installed. Please reboot and run the script again." -Type Warning
+    exit 0
 }
 
 function Update-ProgressBarMain {

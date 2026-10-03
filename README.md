@@ -85,24 +85,24 @@ AzSHCI/
 │   │   ├── 00_Infra_AzHCI.ps1         # Host networking + VM provisioning
 │   │   ├── 01_DC.ps1                  # Domain Controller configuration
 │   │   ├── 02_Cluster.ps1             # Cluster node setup + Arc registration
-│   │   ├── 03_TroubleshootingExtensions.ps1  # Arc extension troubleshooting (extensions now auto-installed by Terraform)
 │   │   ├── 99_Offboarding.ps1         # Full lab teardown
 │   │   └── Old version/              # Archived (reference only)
-│   │       └── 02_Cluster.ps1
+│   │       ├── 02_Cluster.ps1
+│   │       └── 03_TroubleshootingExtensions.ps1  # Arc extension pre-staging, no longer required
 │   ├── 02Day2/
 │   │   ├── 10_StartStopAzSHCI.ps1     # Ordered start/stop of the lab
-│   │   ├── 11_ImageBuilderAzSHCI.ps1  # Azure Marketplace image downloader
-│   │   ├── 11_ImageBuilderAL.ps1      # Optimized image downloader variant
 │   │   ├── 12_AKSArcServiceToken.ps1  # AKS Arc kubeconfig + service token
 │   │   ├── 13_VHDXOptimization.ps1    # VHDX compaction helper
-│   │   └── OldImageBuilder/          # Archived (reference only)
+│   │   └── OldImageBuilder/          # Archived image builders (reference only)
 │   │       ├── 11_AzSHCIImageBuilder_v1.ps1
 │   │       ├── 11_AzSHCIImageBuilder_v2.ps1
 │   │       ├── 11_AzSHCIImageBuilder_v3.ps1
 │   │       ├── 11_AzSHCIImageBuilder_v4.ps1
 │   │       ├── 11_AzSHCIImageBuilder_v5.ps1
 │   │       ├── 11_ImageBuilderAzSHCI_v6.ps1
-│   │       └── 11_ImageBuilderAzSHCI_v7.ps1
+│   │       ├── 11_ImageBuilderAzSHCI_v7.ps1
+│   │       ├── 11_ImageBuilderAzSHCI.ps1
+│   │       └── 11_ImageBuilderAL.ps1
 │   ├── 03VMDeployment/
 │   │   └── 20_SSHRDPArcVM.ps1         # SSH/RDP to Arc-managed VMs
 │   └── 04AVD/
@@ -127,7 +127,7 @@ AzSHCI/
 Each folder under `scripts/` covers a distinct lifecycle phase:
 
 - **01Lab**: Initial infrastructure build, networking, VM creation, domain promotion, Arc registration and full teardown.
-- **02Day2**: Ongoing operations, lab start/stop, image management, AKS Arc access, disk optimization.
+- **02Day2**: Ongoing operations, lab start/stop, AKS Arc access, disk optimization.
 - **03VMDeployment**: Remote access to workload VMs running on top of the Azure Local cluster.
 - **04AVD**: Entra-joined AVD deployment and management, guest configuration, scaling, maintenance and experimental local FSLogix storage.
 
@@ -300,7 +300,7 @@ To register the node with a Service Principal instead of an interactive device c
 
 Runs entirely on the Hyper-V host. Performs these steps in order:
 
-1. **Prerequisite checks**, verifies TPM is present and enabled; installs Hyper-V if missing (requires reboot).
+1. **Prerequisite checks**, verifies TPM is present and enabled. Hyper-V is detected through the `vmms` service and the Hyper-V PowerShell module, so the check also works on Windows Server Insider builds where the DISM feature cmdlets fail with `Class not registered`. If Hyper-V is missing, the script installs it (`Install-WindowsFeature` on Server, `Enable-WindowsOptionalFeature` on client, `dism.exe` as fallback) and exits so you can reboot.
 2. **Virtual switch + NAT**, creates an internal vSwitch named `azurelocal`, assigns IP `172.19.18.1` to the host interface, creates the NAT object and adds an inbound ICMPv4 firewall rule so VMs can ping the gateway.
 3. **Folder structure**, creates `E:\AzureLocalLab\VM\` and `E:\AzureLocalLab\Disk\`.
 4. **HCI Node VM (`AZLN01`)**, creates VHDX files (127 GB OS + 2 × 1 TB S2D), creates a Gen 2 VM with 96 GB static RAM, 32 vCPUs, two NICs (`MGMT1`, `MGMT2`) with MAC spoofing enabled, attaches a vTPM via HgsGuardian + Key Protector, enables nested virtualization, mounts the Azure Local ISO and sets DVD as first boot device.
@@ -308,13 +308,13 @@ Runs entirely on the Hyper-V host. Performs these steps in order:
 
 Both VMs have time synchronisation disabled and automatic stop action set to `ShutDown`.
 
-Key variables to adjust: `$HCIRootFolder`, `$isoPath_HCI`, `$isoPath_DC`, all memory/CPU/disk values.
+Key `.env` settings: `AZSHCI_LAB_ROOT_FOLDER`, `AZSHCI_ISO_PATH_HCI`, `AZSHCI_ISO_PATH_DC` and the `AZSHCI_HCI_*` / `AZSHCI_DC_*` sizing values.
 
 ---
 
 #### 2. `01_DC.ps1`, Domain Controller configuration
 
-> **Before running this script**: start the `DC` VM, complete the Windows Server 2025 manual installation and reach the desktop. The initial local administrator username and password must match the values set in the `$defaultUser` and `$defaultPwd` variables at the top of the script. Adjust those variables if you used different credentials during OS setup.
+> **Before running this script**: start the `DC` VM, complete the Windows Server 2025 manual installation and reach the desktop. The initial local administrator username and password must match `AZSHCI_DEFAULT_ADMIN_USER` and `AZSHCI_DEFAULT_ADMIN_PASSWORD` in `scripts/01Lab/.env`. Adjust those values if you used different credentials during OS setup.
 
 Runs against the `DC` VM over Hyper-V PowerShell Direct. Steps:
 
@@ -335,13 +335,13 @@ Runs against the `DC` VM over Hyper-V PowerShell Direct. Steps:
    - `Computers` → Desktops, Laptops, AVD
 8. Installs `AsHciADArtifactsPreCreationTool` from PSGallery and runs `New-HciAdObjectsPreCreation` to pre-create the AD objects required by Azure Local LCM, placing them in `OU=HCI,OU=Servers,OU=_LAB`.
 
-Key variables to adjust: `$defaultPwd`, `$setupUser`, `$setupPwd`, `$timeZone`, `$dnsForwarder`.
+Key `.env` settings: `AZSHCI_DEFAULT_ADMIN_PASSWORD`, `AZSHCI_DC_LCM_USER`, `AZSHCI_DC_LCM_PASSWORD`, `AZSHCI_DC_TIMEZONE`, `AZSHCI_DNS_FORWARDER` and the `AZSHCI_DOMAIN_*` values.
 
 ---
 
 #### 3. `02_Cluster.ps1`, Cluster node setup and Arc registration
 
-> **Before running this script**: start the `AZLN01` VM, complete the Azure Local manual installation and reach the desktop. The initial local administrator username and password must match the values set in the `$defaultUser` and `$defaultPwd` variables at the top of the script. Adjust those variables if you used different credentials during OS setup.
+> **Before running this script**: start the `AZLN01` VM, complete the Azure Local manual installation and reach the desktop. The initial local administrator username and password must match `AZSHCI_DEFAULT_ADMIN_USER` and `AZSHCI_DEFAULT_ADMIN_PASSWORD` in `scripts/01Lab/.env`. Adjust those values if you used different credentials during OS setup.
 
 The script prompts for an execution mode at startup:
 
@@ -359,69 +359,30 @@ Runs against the `AZLN01` VM over Hyper-V PowerShell Direct. Full setup steps:
    - `MGMT2`: DHCP disabled, RDMA enabled.
    - Time zone set to UTC; time synced from the DC.
 4. Optionally triggers the `ImageCustomizationScheduledTask` if present (Azure Local OEM image).
-5. Calls `Invoke-AzStackHciArcInitialization` on the node. If `$SPNAppId` and `$SPNSecret` are set, the script authenticates via SPN, obtains an ARM access token with `Get-AzAccessToken`, and passes it to `Invoke-AzStackHciArcInitialization` using `-AccountId` and `-ArmAccessToken` (the cmdlet does not use the current Az session). Otherwise the node falls back to an interactive device code login. A retry loop handles the transient `BootstrapOobeService` connection error (up to `$ArcRetryCount` attempts, `$SleepBootstrap` seconds apart).
+5. Calls `Invoke-AzStackHciArcInitialization` on the node. If `AZSHCI_SPN_APP_ID` and `AZSHCI_SPN_SECRET` are set, the script authenticates via SPN, obtains an ARM access token with `Get-AzAccessToken`, and passes it to `Invoke-AzStackHciArcInitialization` using `-AccountId` and `-ArmAccessToken` (the cmdlet does not use the current Az session). Otherwise the node falls back to an interactive device code login. A retry loop handles the transient `BootstrapOobeService` connection error (up to `AZSHCI_ARC_RETRY_COUNT` attempts, `AZSHCI_ARC_SLEEP_BOOTSTRAP` seconds apart).
 
-**You must update these variables before running:**
+**Set these keys in `scripts/01Lab/.env` before running:**
 
-```powershell
-$SubscriptionID    = "000000-00000-000000-00000-0000000"
-$resourceGroupName = "rg-azlocal-lab"
-$TenantID          = "000000-00000-000000-00000-0000000"
-$Location          = "westeurope"   # Azure region
-$Cloud             = "AzureCloud"
+```dotenv
+AZSHCI_SUBSCRIPTION_ID="your-subscription-id"
+AZSHCI_TENANT_ID="your-tenant-id"
+AZSHCI_RESOURCE_GROUP="rg-azlocal-lab"
+AZSHCI_LOCATION="westeurope"
+AZSHCI_CLOUD="AzureCloud"
 ```
 
 **Optional: SPN authentication** (recommended; avoids an interactive device code prompt on the node):
 
-```powershell
-$SPNAppId  = "application-client-id-from-00_AzurePreRequisites"
-$SPNSecret = "client-secret-from-00_AzurePreRequisites"
+```dotenv
+AZSHCI_SPN_APP_ID="application-client-id-from-00_AzurePreRequisites"
+AZSHCI_SPN_SECRET="client-secret-from-00_AzurePreRequisites"
 ```
 
 Leave both empty to fall back to device code login.
 
 ---
 
-#### 4. `03_TroubleshootingExtensions.ps1`, Arc extension troubleshooting
-
-> **No longer required before Terraform deployment.** As of 2026-04-02, the four required Arc extensions are installed automatically during the first `terraform apply` (validate stage). Running this script before `terraform apply` is no longer necessary.
-
-> This script remains useful for troubleshooting: if any extension is in a `Failed` state, stuck at a wrong version, or needs to be reconciled outside of Terraform, run this script to fix the affected extensions on the selected node.
-
-> When deploying through the portal wizard only, this script is not needed either.
-
-An interactive tool that connects to Azure, retrieves Arc-connected machines with `CloudMetadataProvider = "AzSHCI"` and reconciles the four required extensions on the selected node. For each extension the script checks three conditions in order:
-
-1. **Missing** the extension is not installed at all: installs it.
-2. **Failed** the extension is in a Failed provisioning state: removes any resource locks, removes the extension and reinstalls it.
-3. **Version mismatch** the extension is installed but at a different version than the pinned value: removes and reinstalls with the exact target version regardless of whether the installed version is older or newer.
-
-The four required extensions and their pinned versions are:
-
-| Extension name | Publisher | Type | Version | Auto-upgrade |
-|---|---|---|---|---|
-| `AzureEdgeTelemetryAndDiagnostics` | `Microsoft.AzureStack.Observability` | `TelemetryAndDiagnostics` | `2.0.33.0` | Enabled |
-| `AzureEdgeDeviceManagement` | `Microsoft.Edge` | `DeviceManagementExtension` | `1.2602.2.3116` | Disabled |
-| `AzureEdgeLifecycleManager` | `Microsoft.AzureStack.Orchestration` | `LcmController` | `30.2601.0.1162` | Disabled |
-| `AzureEdgeRemoteSupport` | `Microsoft.AzureStack.Observability` | `EdgeRemoteSupport` | `1.0.11.2` | Enabled |
-
-After installing or reinstalling any extension the script polls Azure (up to 10 minutes, 20-second intervals) until all four extensions reach `Succeeded` state.
-
-Once all extensions are confirmed `Succeeded`, the script applies a **LcmController NuGet hotfix** on the node via **Azure Arc Run Command** (no RDP or direct network access to the node required). This fixes a bug in `Microsoft.AzureStack.Role.Deployment.Service 10.2601.x` where `GetTargetBuildManifest` incorrectly blocks the cloud manifest download fallback when Azure pushes minimal `publicSettings` (`CloudName`, `DeviceType`, `RegionName` only). Without this fix, `terraform apply` fails at the `validatedeploymentsetting` step with `DownloadDeploymentPackage` reporting four empty download URLs. The fix patches one line in `DownloadHelpers.psm1` and restarts the `LcmController` Windows service on the node. The step is idempotent, it checks whether the patch has already been applied before modifying anything.
-
-**Authentication** (set the variables at the top of the script before running):
-
-- If `$SPNAppId` and `$SPNSecret` are set, authenticates via Service Principal. `$TenantID` must also be provided.
-- If either SPN value is empty but an existing `Az` session is found, the script prompts whether to reuse it or start a new device code login.
-- If no session exists, falls back to device code login automatically.
-
-**Subscription and Resource Group:**
-
-- Set `$SubscriptionID` and `$ResourceGroupName` to skip interactive selection. Both default to the lab values but can be left empty for interactive prompts.
-
----
-
-#### 5. `99_Offboarding.ps1`, Lab teardown
+#### 4. `99_Offboarding.ps1`, Lab teardown
 
 **Destructive, review before running.** Removes the entire lab in order:
 
@@ -431,6 +392,10 @@ Once all extensions are confirmed `Succeeded`, the script applies a **LcmControl
 4. Removes all IP addresses from the `vEthernet (azurelocal)` interface.
 5. Removes the vSwitch `azurelocal`.
 6. Deletes the entire folder tree at `E:\AzureLocalLab`.
+
+#### Archived: `Old version/03_TroubleshootingExtensions.ps1`
+
+No longer required. Neither the portal wizard nor the Terraform path needs it, because Terraform installs the four mandatory Arc extensions during Stage 1. The script reconciled those extensions to versions pinned for build 10.2601 and applied an LcmController hotfix for that build. It now lives in `scripts/01Lab/Old version/` for reference only. Running it against a newer cluster would reinstall the extensions at the older pinned versions.
 
 ---
 
@@ -457,26 +422,16 @@ The node uses the LCM account from the lab `.env`, while DC authentication uses 
 Progress includes persistent wait messages as well as PowerShell progress bars. Percentages represent elapsed timeout budget, not measured boot completion. `-TimeoutMinutes` controls the bounded waits. Policy snapshots are saved under `%LOCALAPPDATA%\AzSHCI\PowerLifecycle`. A failed prerequisite stops dependent power operations; the script does not discard saved states or force-power-off guests.
 
 ---
-#### 2. `11_ImageBuilderAzSHCI.ps1` and `11_ImageBuilderAL.ps1`, Azure Marketplace image downloader
+#### 2. VM images, imported from Azure Marketplace
 
-Both scripts automate pulling VM images from Azure Marketplace into the Azure Local cluster storage. `11_ImageBuilderAL.ps1` is the optimized variant. Both share the same core workflow:
+Workload VM images no longer need a builder script. Azure Local imports them directly from Azure Marketplace as Marketplace gallery images (`Microsoft.AzureStackHCI/marketplaceGalleryImages`) into a storage path on the cluster. Two ways to do it:
 
-1. Install required PowerShell modules (`Az.Accounts`, `Az.Compute`, `Az.Resources`, `Az.CustomLocation`).
-2. Connect to Azure (device code, with retry).
-3. Select Subscription and Resource Group via `Out-GridView`.
-4. Enumerate image SKUs from a predefined list of publishers (MicrosoftWindowsServer, microsoftwindowsdesktop, Canonical, RedHat, Oracle, SuSE and others).
-5. Present a multi-select `Out-GridView` to choose images.
-6. For each selected image:
-   - Creates a temporary managed disk from the Marketplace image.
-   - Grants SAS access (1 hour).
-   - Downloads the VHD to `C:\ClusterStorage\<LibraryVolumeName>\Images\` on the node using AzCopy (auto-installed if missing).
-   - Revokes SAS and deletes the temporary disk.
-   - Converts VHD → VHDX (dynamic) and runs `Optimize-VHD -Mode Full` on the node.
-7. Prints the VHDX paths so you can register them as Custom Local Images from the Azure portal.
+- **Azure portal**: open the Azure Local instance, go to **VM images**, select **Add VM image** and then **From Azure Marketplace**.
+- **[`30_AVDAzureLocal.ps1`](scripts/04AVD/30_AVDAzureLocal.ps1)**: during a new AVD deployment the script lists the Windows generation 2 images already available and offers to import a Windows 11 image from Marketplace (multi-session for pooled pools, Enterprise for personal pools, with or without Microsoft 365 Apps). It resolves `latest` to a concrete version before submitting the import, lets you pin a specific version, shows download progress and lets you retry a failed download with another version. See [04AVD](#04avd-entra-joined-virtual-desktops).
 
-Key variables to adjust: `$region`, `$nodeName`, `$LibraryVolumeName`, `$netBIOSName`, `$hcipassword`.
+An import downloads the full image, tens of GB, over the lab's internet connection. Plan it for a time when the line is free.
 
-> **Note**: `$nodeName` defaults to `"NODE"` in these scripts; change it to `"AZLN01"` (or your actual node name) if using in this lab.
+The earlier builders, which created a temporary managed disk in Azure, copied it to the node with AzCopy and converted it to VHDX, are archived in `scripts/02Day2/OldImageBuilder/` for reference only.
 
 ---
 
@@ -675,7 +630,7 @@ This mode uses a shared storage identity and `AccessNetworkAsComputerObject=1`. 
 
 #### Validation status
 
-A lab run reached two Available hosts, verified sixteen guest-task executions and completed ten restarts. A subsequent FSLogix log confirmed VHDX creation, attachment and profile redirection; the operator also confirmed that the tested Entra-only user could not list the backing share. That satisfies the limited lab viability test, not a comprehensive security or production-support assessment.
+A lab run reached two Available hosts, verified sixteen guest-task executions and completed ten restarts. Adding session hosts to an existing pool has also been validated live. A subsequent FSLogix log confirmed VHDX creation, attachment and profile redirection; the operator also confirmed that the tested Entra-only user could not list the backing share. That satisfies the limited lab viability test, not a comprehensive security or production-support assessment.
 
 Offline checks covered PowerShell 5.1/7 syntax and selected discovery, lifecycle, removal and configuration paths. Live autoscale, blue/green switching, the latest full-removal flow and broader FSLogix cross-host reuse, credential rotation and recovery require further validation. Review the exact changes and prerequisites for your environment before execution.
 
@@ -688,9 +643,9 @@ The `terraform/` folder contains an Infrastructure-as-Code deployment for the Az
 
 ### Pre-requisites before running Terraform
 
-The four mandatory Arc extensions (`AzureEdgeTelemetryAndDiagnostics`, `AzureEdgeDeviceManagement`, `AzureEdgeLifecycleManager`, `AzureEdgeRemoteSupport`) are installed automatically during Stage 1 (`terraform apply` with `is_exported = false`). Running `scripts/01Lab/03_TroubleshootingExtensions.ps1` before Terraform is **no longer required**.
+The four mandatory Arc extensions (`AzureEdgeTelemetryAndDiagnostics`, `AzureEdgeDeviceManagement`, `AzureEdgeLifecycleManager`, `AzureEdgeRemoteSupport`) are installed automatically during Stage 1 (`terraform apply` with `is_exported = false`). No pre-staging script is needed: the node only has to be Arc-registered by `02_Cluster.ps1`.
 
-`03_TroubleshootingExtensions.ps1` remains available as a troubleshooting tool if any extension ends up in a `Failed` state or needs to be reconciled manually outside of Terraform (see the [script reference](#4-03_troubleshootingextensionsps1-arc-extension-troubleshooting) above).
+The former pre-staging script, `03_TroubleshootingExtensions.ps1`, is archived in `scripts/01Lab/Old version/` (see [the archive note](#archived-old-version03_troubleshootingextensionsps1) above).
 
 ### What it creates
 
@@ -922,7 +877,7 @@ Set this to `false` before `terraform destroy` if the Arc node was manually dele
 - `terraform.tfvars.example` now uses placeholder values for sensitive secrets (`TODO-change-me`, `TODO-your-spn-client-secret`). Replace them before running.
 - On `terraform destroy`, the provider purges the Key Vault immediately (`purge_soft_delete_on_destroy = true`) so the same name can be reused on the next deployment.
 - `resource_provider_registrations = "none"` is set in `providers.tf`. Terraform's azurerm provider would otherwise attempt to auto-register dozens of unrelated providers (ContainerInstance, Databricks, EventGrid...) at subscription scope, requiring `*/register/action` permission. All providers needed for Azure Local are already registered by `00_AzurePreRequisites.ps1`, so this is both safe and avoids over-privileging the SPN.
-- **Secret rotation**: the client secret generated by `00_AzurePreRequisites.ps1` is valid for 2 years. Rotate it before it expires to avoid service disruptions. Follow the [ARB Service Principal secret rotation procedure](https://github.com/MicrosoftDocs/azure-stack-docs/blob/main/azure-local/manage/manage-secrets-rotation.md#change-arb-service-principal-secret) and update `service_principal_secret` in `terraform.tfvars` (and the `$SPNSecret` variable in any script that uses it) with the new value.
+- **Secret rotation**: the client secret generated by `00_AzurePreRequisites.ps1` is valid for 2 years. Rotate it before it expires to avoid service disruptions. Follow the [ARB Service Principal secret rotation procedure](https://github.com/MicrosoftDocs/azure-stack-docs/blob/main/azure-local/manage/manage-secrets-rotation.md#change-arb-service-principal-secret) and update `service_principal_secret` in `terraform.tfvars` (and `AZSHCI_SPN_SECRET` in `scripts/01Lab/.env`) with the new value.
 
 ---
 
@@ -953,14 +908,11 @@ Set this to `false` before `terraform destroy` if the Arc node was manually dele
 |---|---|
 | `Az.Accounts`, `Az.Resources`, `Az.Compute`, `Az.ConnectedMachine` | AVD deployment and guest operations |
 | `ActiveDirectory`, `SmbShare` on the target DC; Hyper-V PowerShell Direct or WinRM on the operator machine | Experimental FSLogix share creator |
-| `Az.Accounts`, `Az.Compute`, `Az.Resources`, `Az.CustomLocation` | Image builder scripts |
-| `Az.Compute`, `Az.StackHCI`, `Az.ConnectedMachine` | `03_TroubleshootingExtensions.ps1` |
 | `Az.Compute`, `Az.ConnectedMachine` | `20_SSHRDPArcVM.ps1` |
 | Azure CLI (`az`) + `aksarc` extension | `12_AKSArcServiceToken.ps1` |
 | Azure CLI (`az`) + `ssh` extension | `20_SSHRDPArcVM.ps1` |
 | `kubectl` | `12_AKSArcServiceToken.ps1` |
 | `winget` | Optional, used by `12_AKSArcServiceToken.ps1` to install CLI tools interactively |
-| AzCopy | Downloaded automatically to `C:\AzCopy\` on the node by the image builder scripts |
 | `PSWindowsUpdate` module | `01_DC.ps1` (installed at runtime) |
 | `AsHciADArtifactsPreCreationTool` module | `01_DC.ps1` (installed at runtime) |
 
@@ -1014,9 +966,6 @@ See [Configuration with the .env file](#configuration-with-the-env-file) for the
 # Step 3, configure the cluster node and register with Azure Arc
 #   Start the AZLN01 VM manually first, wait for Windows Setup to finish, then run:
 .\scripts\01Lab\02_Cluster.ps1
-
-# Optional troubleshooting only; no longer required before Terraform deployment
-# .\scripts\01Lab\03_TroubleshootingExtensions.ps1
 ```
 
 > After `02_Cluster.ps1` completes the Arc registration, deploy the cluster from the Azure portal or use the Terraform configuration described in the next step.
@@ -1050,10 +999,9 @@ See the [Terraform Deployment](#terraform-deployment) section below for full det
 # Start or stop the full lab in the correct order
 .\scripts\02Day2\10_StartStopAzSHCI.ps1
 
-# Download and import Azure Marketplace images
-.\scripts\02Day2\11_ImageBuilderAzSHCI.ps1
-# or the optimized variant
-.\scripts\02Day2\11_ImageBuilderAL.ps1
+# VM images: import them from Azure Marketplace in the portal
+# (Azure Local instance > VM images > Add VM image > From Azure Marketplace)
+# or let 30_AVDAzureLocal.ps1 import one during an AVD deployment
 
 # Generate AKS Arc kubeconfig and service token
 .\scripts\02Day2\12_AKSArcServiceToken.ps1
@@ -1093,8 +1041,7 @@ Run `.\scripts\04AVD\30_AVDAzureLocal.ps1` after the cluster is deployed. See [0
 - **Lab credentials and the `.env` file**: the 01Lab scripts read passwords and Azure identifiers from `scripts/01Lab/.env`. The shipped `scripts/01Lab/.env.example` carries intentional lab defaults such as `Start#1234` and `dgemsc#utquMHDHp3M`. `scripts/01Lab/.env` is listed in `.gitignore` and must never be committed. Share configuration only through `scripts/01Lab/.env.example`. In Terraform, `terraform.tfvars.example` likewise uses placeholder secrets (`TODO-change-me`, `TODO-your-spn-client-secret`). Review and replace every credential before running and never commit real secrets.
 - **Host-level changes**: the scripts create a Hyper-V vSwitch, a NAT object and firewall rules on the host. Verify the `172.19.18.0/24` subnet does not conflict with your environment.
 - **Offboarding is destructive**: `99_Offboarding.ps1` deletes VMs, VHDs, network objects and the entire lab folder without further prompting. Review the script and the variables before executing.
-- **Azure costs**: managed disks are created temporarily during image download and deleted immediately after. Verify no orphaned disks remain in your resource group if a script is interrupted.
-- **Secret rotation**: the Service Principal client secret generated by `00_AzurePreRequisites.ps1` is valid for 2 years. Rotate it before it expires to prevent authentication failures across all scripts and Terraform runs that rely on it. Follow the [ARB Service Principal secret rotation procedure](https://github.com/MicrosoftDocs/azure-stack-docs/blob/main/azure-local/manage/manage-secrets-rotation.md#change-arb-service-principal-secret) and update every location where the secret is referenced (`$SPNSecret` in `02_Cluster.ps1` and `03_TroubleshootingExtensions.ps1`, and `service_principal_secret` in `terraform/terraform.tfvars`).
+- **Secret rotation**: the Service Principal client secret generated by `00_AzurePreRequisites.ps1` is valid for 2 years. Rotate it before it expires to prevent authentication failures across all scripts and Terraform runs that rely on it. Follow the [ARB Service Principal secret rotation procedure](https://github.com/MicrosoftDocs/azure-stack-docs/blob/main/azure-local/manage/manage-secrets-rotation.md#change-arb-service-principal-secret) and update every location where the secret is referenced (`AZSHCI_SPN_SECRET` in `scripts/01Lab/.env` and `service_principal_secret` in `terraform/terraform.tfvars`).
 
 ---
 

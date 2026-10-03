@@ -6,6 +6,11 @@
     Troubleshoots and manages Azure Connected Machine extensions for ARC VMs.
 
 .DESCRIPTION
+    ARCHIVED (2026-10-03): moved to scripts\01Lab\Old version. Neither the portal wizard nor the
+    Terraform path needs it, and the extension versions and LcmController hotfix pinned below
+    target build 10.2601. Kept for reference only; running it against a newer cluster reinstalls
+    the extensions at these older versions.
+
     NOTE (2026-04-02): As of the current Terraform configuration, the four required Arc extensions
     (AzureEdgeTelemetryAndDiagnostics, AzureEdgeDeviceManagement, AzureEdgeLifecycleManager,
     AzureEdgeRemoteSupport) are now installed automatically during the first Terraform apply
@@ -48,7 +53,7 @@
 # Load the lab configuration into this session if it has not been loaded yet.
 # Tip: run scripts\01Lab\Set-LabEnv.ps1 once per session to set everything from
 # scripts\01Lab\.env. See scripts\01Lab\.env.example for the full list of keys.
-if ($env:AZSHCI_ENV_LOADED -ne '1') { & "$PSScriptRoot\Set-LabEnv.ps1" }
+if ($env:AZSHCI_ENV_LOADED -ne '1') { & "$PSScriptRoot\..\Set-LabEnv.ps1" }
 
 # Azure Configuration
 # Leave AZSHCI_SUBSCRIPTION_ID empty in scripts\01Lab\.env to select interactively from available subscriptions.

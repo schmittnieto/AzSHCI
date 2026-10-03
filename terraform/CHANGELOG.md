@@ -6,6 +6,75 @@ necessary, and **where** the change lives.
 
 ---
 
+## 2026-10-03 - Arc extension pre-staging script archived
+
+### scripts/01Lab/03_TroubleshootingExtensions.ps1 moved to scripts/01Lab/Old version/
+
+**Change**: The script that installed the four mandatory Arc extensions and applied the
+LcmController NuGet hotfix (see the 2026-04-01 and 2026-04-02 entries below) now lives in
+`scripts/01Lab/Old version/` as reference only. Its `Set-LabEnv.ps1` call was adjusted to the
+new folder depth.
+
+**Why**: Stage 1 has installed the extensions since 2026-04-02, and the hotfix only applied to
+`Microsoft.AzureStack.Role.Deployment.Service 10.2601.x`. The Terraform path no longer depends
+on the script. Its extension versions are pinned to build 10.2601, so running it against a
+newer cluster would reinstall older extensions.
+
+**Impact**: Before `terraform apply`, the node only has to be Arc-registered by
+`02_Cluster.ps1`, with the SPN and RBAC prepared by `00_AzurePreRequisites.ps1`. The root
+README no longer lists the script as a troubleshooting step.
+
+---
+
+## 2026-09-07 - Validated deployments on releases 2604 to 2608
+
+The staged flow (Validate, then Deploy) completed full deployments on these Azure Local
+releases, as recorded in `terraform/lastdeployment.json`:
+
+| Date | Release |
+|---|---|
+| 2026-09-07 | 2608 |
+| 2026-06-30 | 2606 |
+| 2026-06-08 | 2605 |
+| 2026-04-24 | 2604 |
+
+---
+
+## 2026-06-30 - Import block for the resource provider role assignment; SPN login helper
+
+### main.tf + variables.tf + terraform.tfvars.example: `import_service_principal_role_assignment_ids`
+
+**Problem**: `scripts/01Lab/99_Offboarding.ps1` removes only the Hyper-V VMs and host
+networking. When a lab is torn down without `terraform destroy`, the
+`Azure Connected Machine Resource Manager` (ACMRM) role assignment for the
+Microsoft.AzureStackHCI resource provider SPN survives in Azure, and the next apply fails with
+`409 RoleAssignmentExists`.
+
+**Fix**: Added an optional `import` block driven by the new map variable
+`import_service_principal_role_assignment_ids`. The key is `ACMRM` and the value is the GUID
+from the 409 error. Reset it to `{}` after a successful apply. Same pattern as
+`import_machine_rg_role_assignment_ids`.
+
+### Connect-Spn.ps1.example + README.md: Clean Azure CLI login as the Terraform SPN
+
+**Problem**: A cached Azure CLI session from another tenant or service principal made
+`terraform plan` run against the wrong identity.
+
+**Fix**: Added `Connect-Spn.ps1.example`. Copied to `Connect-Spn.ps1` (gitignored), it reads the
+SPN and subscription from `terraform.tfvars` and the tenant from `scripts/01Lab/.env`, clears the
+cached CLI session, then runs `az login --service-principal` and `az account set`.
+`terraform/README.md` gained the sections "Authenticate with the service principal" and
+"Clean teardown and role assignments".
+
+---
+
+## 2026-04-18 - Stage 1 duration estimate
+
+`terraform.tfvars.example`: the Stage 1 (Validate) duration in the header comment changed from
+~60 to ~90 minutes.
+
+---
+
 ## 2026-04-02 - Document staged deployment defaults; require RBAC before `edgeDevices`
 
 ### terraform/README.md + terraform/terraform.tfvars.example: Current lab flow and sample values documented
