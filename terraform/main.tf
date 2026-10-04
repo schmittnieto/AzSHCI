@@ -52,20 +52,59 @@ import {
 }
 
 # ---------------------------------------------------------------------------
-# Import block for the existing resource provider role assignment.
+# Adopt the existing resource provider role assignment automatically.
 #
 # service_principal_role_assign (ACMRM, "Azure Connected Machine Resource
-# Manager" for the Microsoft.AzureStackHCI RP service principal) may already
-# exist in Azure when a previous deployment was torn down without terraform
-# destroy. The host-only scripts/01Lab/99_Offboarding.ps1 removes only the
-# Hyper-V VMs and networking, not Azure RBAC, so the assignment survives and
-# the next apply fails with 409 RoleAssignmentExists.
-# Populate import_service_principal_role_assignment_ids with the GUID from the
-# 409 error (key "ACMRM"), run terraform apply, then reset the variable to {}.
+# Manager" for the Microsoft.AzureStackHCI RP service principal) survives a
+# teardown without terraform destroy: the host-only
+# scripts/01Lab/99_Offboarding.ps1 removes only the Hyper-V VMs and
+# networking, not Azure RBAC. The RP principal is the same in every
+# deployment, so creating the assignment again fails with
+# 409 RoleAssignmentExists.
+#
+# Terraform therefore lists the role assignments of the resource group and,
+# when that exact assignment exists at resource group scope, imports it
+# instead of creating it. Once it is in state the import is a no-op, so the
+# block can stay in place. import_service_principal_role_assignment_ids still
+# works as a manual override.
 # ---------------------------------------------------------------------------
 
+data "azuread_service_principal" "hci_rp" {
+  count     = var.enable_cluster_module && var.rp_service_principal_object_id == "" ? 1 : 0
+  client_id = "1412d89f-b8a8-4111-b4fd-e82905cbd85d" # Microsoft.AzureStackHCI resource provider
+}
+
+data "azapi_resource_list" "rg_role_assignments" {
+  count                  = var.enable_cluster_module ? 1 : 0
+  type                   = "Microsoft.Authorization/roleAssignments@2022-04-01"
+  parent_id              = data.azurerm_resource_group.rg.id
+  response_export_values = ["value"]
+}
+
+locals {
+  # Built-in role "Azure Connected Machine Resource Manager" (same GUID in every tenant)
+  acmrm_role_definition_guid = "f5819b54-e033-4d82-ac66-4fec3cbf3f4c"
+
+  hci_rp_object_id = var.rp_service_principal_object_id != "" ? var.rp_service_principal_object_id : try(data.azuread_service_principal.hci_rp[0].object_id, "")
+
+  # The list also returns assignments inherited from the subscription, so the
+  # scope must match the resource group exactly.
+  existing_acmrm_assignments = {
+    for ra in try(data.azapi_resource_list.rg_role_assignments[0].output.value, []) :
+    "ACMRM" => ra.name...
+    if lower(ra.properties.principalId) == lower(local.hci_rp_object_id) &&
+    lower(ra.properties.scope) == lower(data.azurerm_resource_group.rg.id) &&
+    endswith(lower(ra.properties.roleDefinitionId), local.acmrm_role_definition_guid)
+  }
+
+  service_principal_role_import_ids = merge(
+    { for key, names in local.existing_acmrm_assignments : key => names[0] },
+    var.import_service_principal_role_assignment_ids
+  )
+}
+
 import {
-  for_each = var.enable_cluster_module ? var.import_service_principal_role_assignment_ids : {}
+  for_each = var.enable_cluster_module ? local.service_principal_role_import_ids : {}
   id       = "/subscriptions/${var.subscription_id}/resourceGroups/${var.resource_group_name}/providers/Microsoft.Authorization/roleAssignments/${each.value}"
   to       = module.azure_local_cluster[0].azurerm_role_assignment.service_principal_role_assign[each.key]
 }

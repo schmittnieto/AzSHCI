@@ -118,15 +118,10 @@ terraform destroy
 ..\scripts\01Lab\99_Offboarding.ps1
 ```
 
-If you tear the lab down with `99_Offboarding.ps1` alone (or lose the Terraform state) the role assignments stay behind in Azure. The next `terraform apply` then fails with `409 RoleAssignmentExists`, because Terraform tries to create an assignment that already exists. The recovery is to import the orphaned assignment instead of recreating it (see below), or delete it in Azure and let Terraform recreate it:
+If you tear the lab down with `99_Offboarding.ps1` alone (or lose the Terraform state) the role assignments stay behind in Azure. You do not need to delete them before the next deployment:
 
-```powershell
-az role assignment delete `
-  --assignee "<rp_service_principal_object_id>" `
-  --role "Azure Connected Machine Resource Manager" `
-  --scope "/subscriptions/<subscription_id>/resourceGroups/<resource_group_name>"
-terraform apply
-```
+- **Resource provider assignment (ACMRM):** `main.tf` lists the role assignments of the resource group on every plan. If the `Azure Connected Machine Resource Manager` assignment for the Microsoft.AzureStackHCI service principal already exists at resource group scope, Terraform imports it. If it does not exist, Terraform creates it. Once it is in state the import is a no-op.
+- **Machine assignments (DMR, INFRA, KVSU):** they belong to the Arc machine identity, which is new after every node registration, and the Key Vault, which is new on every deployment. They do not collide with the leftovers of a previous lab.
 
 ## Recovery helpers
 
@@ -138,7 +133,7 @@ Recovery variables documented in `terraform.tfvars.example`:
 
 Use them only when Azure resources already exist but Terraform state was lost or was never destroyed during a previous teardown. Reset them after the recovery apply succeeds.
 
-`import_service_principal_role_assignment_ids` handles the resource provider role assignment (ACMRM, the `Azure Connected Machine Resource Manager` role on the Microsoft.AzureStackHCI service principal). When a previous deployment was removed with the host offboarding only, this assignment survives and the next apply fails with `409 RoleAssignmentExists` on `service_principal_role_assign["ACMRM"]`. Take the GUID from the error message and import it:
+`import_service_principal_role_assignment_ids` is normally not needed any more: the resource provider role assignment (ACMRM) is detected and imported automatically, as described in [Clean teardown and role assignments](#clean-teardown-and-role-assignments). Keep it as a manual override, for example if the automatic lookup cannot read the resource group's role assignments. Take the GUID from the 409 error and import it:
 
 ```hcl
 import_service_principal_role_assignment_ids = {

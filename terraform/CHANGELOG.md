@@ -6,6 +6,39 @@ necessary, and **where** the change lives.
 
 ---
 
+## 2026-10-04 - Adopt or create the resource provider role assignment automatically
+
+### main.tf: automatic import of an existing ACMRM assignment
+
+**Problem**: After a teardown with the host-only `99_Offboarding.ps1`, the
+`Azure Connected Machine Resource Manager` (ACMRM) assignment for the Microsoft.AzureStackHCI
+resource provider SPN stays in the resource group. That principal is the same in every
+deployment, so the next apply failed on `service_principal_role_assign["ACMRM"]` with
+`409 RoleAssignmentExists`. The workaround was to copy the GUID into
+`import_service_principal_role_assignment_ids` or delete the assignment by hand.
+
+**Fix**: `main.tf` now reads the resource group's role assignments with
+`azapi_resource_list` (`Microsoft.Authorization/roleAssignments@2022-04-01`) and filters for the
+RP principal, the ACMRM role definition (`f5819b54-e033-4d82-ac66-4fec3cbf3f4c`) and an exact
+resource group scope (the list also returns inherited assignments). A match feeds the existing
+`import` block, so Terraform adopts the assignment. With no match, nothing is imported and the
+module creates the assignment as before. Once it is in state the import is a no-op.
+The RP object ID comes from `rp_service_principal_object_id` or, when empty, from an
+`azuread_service_principal` lookup, matching the module's own logic.
+
+`import_service_principal_role_assignment_ids` remains as a manual override and takes
+precedence over the lookup.
+
+**Validation**: against the lab, with the assignment left over from the 2026-09-07 deployment,
+`terraform plan` showed `1 to import, 3 to add, 0 to change, 0 to destroy` and imported
+`fa9cec99-5a32-c5ec-3058-0b523f25c3c7` instead of creating it.
+
+**Not covered**: the machine assignments (DMR, INFRA, KVSU) use the Arc machine identity and the
+new Key Vault, so they do not collide after a host-only teardown. If Terraform state is lost
+mid-deployment, `import_machine_rg_role_assignment_ids` is still the recovery path.
+
+---
+
 ## 2026-10-03 - Arc extension pre-staging script archived
 
 ### scripts/01Lab/03_TroubleshootingExtensions.ps1 moved to scripts/01Lab/Old version/
