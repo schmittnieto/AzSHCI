@@ -187,10 +187,9 @@ import_service_principal_role_assignment_ids = {}
 
 is_exported = false
 
-# Set to true only after a successful full deployment (all steps completed).
-# Keep false while deploying or retrying — arcbridge and customlocation
-# do not exist until all deployment steps have succeeded.
-deployment_completed = false
+# No deployment_completed flag is needed any more: the Deploy stage reads the
+# Arc resource bridge, custom location and Arc settings itself once Azure has
+# finished the deployment.
 
 # ---------------------------------------------------------------------------
 # Deployment options

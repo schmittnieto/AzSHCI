@@ -397,9 +397,8 @@ variable "deployment_completed" {
   type        = bool
   default     = false
   description = <<-EOT
-    Set to true only after a successful full deployment (Stage 2 Deploy finished without errors).
-    Controls whether Terraform reads post-deployment resources that are created by the Azure
-    deployment engine (arcbridge, customlocation). Keep false while deploying or retrying a
-    failed deployment — these resources do not exist until all deployment steps complete.
+    DEPRECATED, no effect. Kept only so existing terraform.tfvars files still load cleanly.
+    The post-deployment reads (arcbridge, customlocation, arc_settings) now run automatically
+    in the Deploy stage (is_exported = true), after the deploymentsetting update has finished.
   EOT
 }

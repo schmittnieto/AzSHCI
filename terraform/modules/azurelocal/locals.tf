@@ -143,7 +143,7 @@ locals {
       secretLocation = "${local.secrets_location}secrets/${local.keyvault_secret_names[secret.eceSecretName]}"
     }
   ]
-  owned_user_storages = var.deployment_completed ? [for storage in local.decoded_user_storages : storage if lower(storage.extendedLocation.name) == lower(data.azapi_resource.customlocation[0].id)] : []
+  owned_user_storages = var.is_exported ? [for storage in local.decoded_user_storages : storage if lower(storage.extendedLocation.name) == lower(data.azapi_resource.customlocation[0].id)] : []
   rdma_adapter_properties = {
     jumboPacket             = var.rdma_jumbo_packet
     networkDirect           = "Enabled"

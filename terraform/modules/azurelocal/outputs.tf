@@ -1,11 +1,11 @@
 output "arc_settings" {
-  description = "Arc settings instance after HCI connected. null until deployment_completed = true."
-  value       = var.deployment_completed ? data.azapi_resource.arc_settings[0] : null
+  description = "Arc settings instance after HCI connected. null until the Deploy stage has finished."
+  value       = var.is_exported ? data.azapi_resource.arc_settings[0] : null
 }
 
 output "arcbridge" {
-  description = "Arc resource bridge instance after HCI connected. null until deployment_completed = true."
-  value       = var.deployment_completed ? data.azapi_resource.arcbridge[0] : null
+  description = "Arc resource bridge instance after HCI connected. null until the Deploy stage has finished."
+  value       = var.is_exported ? data.azapi_resource.arcbridge[0] : null
 }
 
 output "cluster" {
@@ -14,8 +14,8 @@ output "cluster" {
 }
 
 output "customlocation" {
-  description = "Custom location instance after HCI connected. null until deployment_completed = true."
-  value       = var.deployment_completed ? data.azapi_resource.customlocation[0] : null
+  description = "Custom location instance after HCI connected. null until the Deploy stage has finished."
+  value       = var.is_exported ? data.azapi_resource.customlocation[0] : null
 }
 
 output "keyvault" {

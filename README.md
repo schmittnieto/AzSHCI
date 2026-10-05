@@ -191,7 +191,7 @@ flowchart TD
 
 ### Terraform Module Architecture
 
-The Terraform root configuration creates the shared prerequisites first, then calls the local fork of the AVM module. The module assigns RBAC, registers the Arc edge device and submits the deployment settings in two stages. Post-deployment reads stay disabled until `deployment_completed` is set to `true`.
+The Terraform root configuration creates the shared prerequisites first, then calls the local fork of the AVM module. The module assigns RBAC, registers the Arc edge device and submits the deployment settings in two stages. The Deploy stage waits for Azure to finish and then reads the resources the deployment created, in the same run.
 
 ```mermaid
 flowchart TB
@@ -220,7 +220,7 @@ flowchart TB
     RBAC --> Edge --> Validate --> Deploy
     Edge --> ArcNode
     Deploy --> Cluster
-    Deploy -. deployment_completed .-> Post
+    Deploy -. after deployment finishes .-> Post
 ```
 
 ---
@@ -668,7 +668,7 @@ After the full deployment succeeds, the module can also read and expose post-dep
 - Custom location
 - Arc resource bridge
 
-Those post-deployment reads are intentionally skipped until `deployment_completed = true` so that `plan` and `apply` do not fail while Azure is still creating them.
+Those post-deployment reads happen only in the Deploy stage (`is_exported = true`) and wait for the deployment settings update, which returns when Azure finishes the deployment. Stage 1 skips them, so `plan` and `apply` never try to read them while Azure is still creating them. No manual flag is needed.
 
 ### Prerequisites for Terraform
 
@@ -718,7 +718,7 @@ The fork now also includes reliability and cleanup changes based on real lab run
 
 - `edgeDevices` registration uses `azapi_resource_action` and is explicitly ordered after the required RBAC assignments.
 - `create_hci_rp_role_assignments` now defaults to `true` because the Microsoft.AzureStackHCI resource provider SPN needs the `Azure Connected Machine Resource Manager` role before Arc extensions can be installed.
-- Post-deployment Arc reads (`arc_settings`, `arcbridge`, `customlocation`) are guarded by `deployment_completed`, and their outputs return `null` until those resources really exist.
+- Post-deployment Arc reads (`arc_settings`, `arcbridge`, `customlocation`) run only in the Deploy stage and only after the deployment settings update has finished, so they never run before those resources exist. Their outputs are `null` in Stage 1.
 - The cluster resource no longer carries an unnecessary direct dependency on `edgeDevices`; the dependency chain is now kept where it matters, on validation and deployment.
 - Older Arc-related lookup and recovery behaviour has been cleaned up so Terraform no longer tries to read post-deployment Arc resources too early during validate, retry, import or recovery scenarios.
 
@@ -731,10 +731,9 @@ management_adapters = ["MGMT1"]
 storage_networks = [
   { name = "MGMT1", networkAdapterName = "MGMT1", vlanId = "711" }
 ]
-networking_type      = ""
-networking_pattern   = ""
-is_exported          = false
-deployment_completed = false
+networking_type    = ""
+networking_pattern = ""
+is_exported        = false
 ```
 
 This reflects the current single-node lab defaults and the staged deployment flow documented in `terraform/terraform.tfvars.example`.
@@ -858,9 +857,9 @@ import_machine_rg_role_assignment_ids = {
 
 Reset to `{}` after a successful apply.
 
-**`deployment_completed`** (bool, default `false`)
+**`deployment_completed`** (deprecated, no effect)
 
-Keep this at `false` while validation, deployment or retries are still in progress. Set it to `true` only after the full deployment has finished successfully. This enables post-deployment reads for resources such as `arcbridge`, `customlocation` and `arc_settings`.
+No longer needed. The Deploy stage reads `arcbridge`, `customlocation` and `arc_settings` by itself once Azure has finished the deployment. The variable stays declared only so older `terraform.tfvars` files load without a warning.
 
 **`enable_cluster_module`** (bool, default `true`)
 

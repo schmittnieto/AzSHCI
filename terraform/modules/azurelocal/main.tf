@@ -1,5 +1,5 @@
 data "azapi_resource" "arcbridge" {
-  count     = var.deployment_completed ? 1 : 0
+  count     = var.is_exported ? 1 : 0
   type      = "Microsoft.ResourceConnector/appliances@2022-10-27"
   name      = "${var.name}-arcbridge"
   parent_id = var.resource_group_id
@@ -8,7 +8,7 @@ data "azapi_resource" "arcbridge" {
 }
 
 data "azapi_resource" "customlocation" {
-  count     = var.deployment_completed ? 1 : 0
+  count     = var.is_exported ? 1 : 0
   type      = "Microsoft.ExtendedLocation/customLocations@2021-08-15"
   name      = var.custom_location_name
   parent_id = var.resource_group_id
@@ -25,7 +25,7 @@ data "azapi_resource_list" "user_storages" {
 }
 
 data "azapi_resource" "arc_settings" {
-  count     = var.deployment_completed ? 1 : 0
+  count     = var.is_exported ? 1 : 0
   type      = "Microsoft.AzureStackHCI/clusters/ArcSettings@2024-04-01"
   name      = "default"
   parent_id = azapi_resource.cluster.id

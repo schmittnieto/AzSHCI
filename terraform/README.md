@@ -83,7 +83,6 @@ The current sample is aligned to the single-node lab used in this repository:
 - `networking_type = ""`
 - `networking_pattern = ""`
 - `witness_type = ""`
-- `deployment_completed = false`
 
 The example also uses placeholder secrets instead of committed lab credentials:
 
@@ -160,12 +159,6 @@ This skips the cluster module and avoids failing Arc data-source lookups during 
 
 ## After a successful deployment
 
-Keep:
+Nothing to change. The Stage 2 `terraform apply` (`is_exported = true`) waits until Azure finishes the deployment, then reads the resources the deployment created (`arcbridge`, `customlocation`, `arc_settings`) in the same run, so `custom_location_id` is populated when the apply ends. Stage 1 (`is_exported = false`) skips those reads because they do not exist yet.
 
-```hcl
-deployment_completed = false
-```
-
-while validation, deployment, or retry operations are still in progress.
-
-Set it to `true` only after the full deployment has finished successfully. That enables post-deployment reads for resources such as `arcbridge`, `customlocation`, and related outputs that do not exist before Azure completes the deployment.
+The former `deployment_completed` variable is deprecated and has no effect. It stays declared only so older `terraform.tfvars` files load without a warning.

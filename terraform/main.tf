@@ -304,8 +304,9 @@ module "azure_local_cluster" {
 
   enable_telemetry = var.enable_telemetry
 
-  # Post-deployment resource reads — only enable after a successful full deployment.
-  deployment_completed = var.deployment_completed
+  # Post-deployment reads (arcbridge, customlocation, arc_settings) need no flag:
+  # they run in the Deploy stage (is_exported = true) and wait for the
+  # deploymentsetting update, which only returns when Azure finishes the deployment.
 
   depends_on = [
     azurerm_key_vault.deployment_keyvault,

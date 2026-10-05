@@ -6,6 +6,39 @@ necessary, and **where** the change lives.
 
 ---
 
+## 2026-10-04 - Post-deployment reads no longer need `deployment_completed`
+
+### modules/azurelocal/main.tf + outputs.tf + locals.tf: reads gated by `is_exported`
+
+**Problem**: After every successful Stage 2 apply the operator had to set
+`deployment_completed = true` and run another apply before `arcbridge`, `customlocation`,
+`arc_settings` and the `custom_location_id` output were available.
+
+**Fix**: Those data sources already declared `depends_on = [azapi_update_resource.deploymentsetting]`.
+That resource only completes when Azure finishes the deployment (24h timeout), and Terraform defers
+a data source with a pending dependency until apply. Their `count` is now
+`var.is_exported ? 1 : 0` instead of `var.deployment_completed ? 1 : 0`:
+
+- Stage 1 (Validate): `is_exported = false`, nothing is read.
+- Stage 2 (Deploy): the reads wait for the deployment and run in the same apply, so the outputs are
+  populated when it ends.
+- Later plans: the deploymentsetting update is in state with no changes, so the reads run at plan
+  time against resources that now exist.
+- Failed deployment: the update resource errors, the apply stops before the reads, and the next
+  apply retries it with the reads deferred again.
+
+The module variable `deployment_completed` was removed. The root variable remains declared as
+deprecated with no effect, so existing `terraform.tfvars` files load without a warning.
+
+**Validation**: the Stage 2 deployment of 2026-10-04 (release 2608, `12.2608.1003.9`, 145 min)
+ran with the previous code. The first apply with the new code, still with
+`deployment_completed = false` in `terraform.tfvars`, read `arcbridge`, `customlocation` and
+`arc_settings` at plan time, reported `0 added, 0 changed, 0 destroyed` and populated
+`custom_location_id`. The in-apply path (reads deferred until the deploy finishes) is exercised
+by the next full deployment.
+
+---
+
 ## 2026-10-04 - Adopt or create the resource provider role assignment automatically
 
 ### main.tf: automatic import of an existing ACMRM assignment
