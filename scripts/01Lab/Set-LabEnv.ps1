@@ -40,9 +40,12 @@
 
 [CmdletBinding()]
 param(
-    [string]$EnvFile = (Join-Path -Path $PSScriptRoot -ChildPath '.env'),
+    [string]$EnvFile,
     [switch]$Quiet
 )
+
+# Resolved here because $PSScriptRoot is empty in param defaults under Windows PowerShell 5.1 -File
+if ([string]::IsNullOrWhiteSpace($EnvFile)) { $EnvFile = Join-Path -Path $PSScriptRoot -ChildPath '.env' }
 
 if (-not (Test-Path -Path $EnvFile)) {
     throw "Lab .env not found at '$EnvFile'. Copy scripts\01Lab\.env.example to scripts\01Lab\.env and edit it before running the deployment scripts."

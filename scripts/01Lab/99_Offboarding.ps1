@@ -2,22 +2,43 @@
 
 <#
 .SYNOPSIS
-    Cleans up VM configurations, virtual switches, NAT settings, and associated folders.
+    Removes the whole lab, or only the Azure Local node while keeping the domain controller.
 
 .DESCRIPTION
-    This script performs the following tasks:
-    - Stops and removes specified VMs.
-    - Deletes associated VHD files.
-    - Removes HgsGuardian entries.
-    - Deletes virtual switches and NAT configurations.
-    - Removes designated folder structures.
+    Two modes are available, selected with -Mode or interactively at startup:
+
+    1 / All       Removes the node and DC VMs with their disks and HgsGuardians, the NAT,
+                  the IP addresses on the virtual switch interface, the virtual switch,
+                  the ICMP firewall rules and the whole lab folder.
+    2 / NodeOnly  Removes only the Azure Local node VM, its disks (OS and S2D), its
+                  HgsGuardian and its VM folder. The DC VM, the networking, the firewall
+                  rules and the rest of the lab folder stay in place. Redeploy the node with
+                  00_Infra_AzHCI.ps1 (it skips the existing switch, NAT and DC) and 02_Cluster.ps1.
+
+    Neither mode touches Azure resources or Active Directory objects.
+
+.PARAMETER Mode
+    All or NodeOnly. When omitted, the script asks.
+
+.EXAMPLE
+    .\99_Offboarding.ps1
+    Shows the menu and asks what to remove.
+
+.EXAMPLE
+    .\99_Offboarding.ps1 -Mode NodeOnly
+    Removes only the Azure Local node and keeps the domain controller.
 
 .NOTES
-    - Designed by Cristian Schmitt Nieto. For more information and usage, visit: https://schmitt-nieto.com/blog/azure-stack-hci-demolab/
+    - Designed by Cristian Schmitt Nieto. For more information and usage, visit: https://schmitt-nieto.com/blog/azure-local-demolab/
     - Run this script with administrative privileges.
     - Ensure the Execution Policy allows the script to run. To set the execution policy, you can run:
       Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 #>
+
+param(
+    [ValidateSet('All', 'NodeOnly')]
+    [string]$Mode
+)
 
 #region Variables
 
@@ -40,20 +61,11 @@ $vNetIPNetwork  = $env:AZSHCI_LAB_SUBNET
 # Define Root Folder for VMs and Disks
 $HCIRootFolder = $env:AZSHCI_LAB_ROOT_FOLDER
 $HCIDiskFolder = Join-Path -Path $HCIRootFolder -ChildPath "Disk"
+$HCIVMFolder   = Join-Path -Path $HCIRootFolder -ChildPath "VM"
 
-# Define Tasks for Progress Bar
-$tasks = @(
-    "Stopping and Removing HCI Node VM",
-    "Stopping and Removing Domain Controller VM",
-    "Removing NAT Configuration",
-    "Removing IP Addresses from Virtual Switch Interface",
-    "Removing Virtual Switch",
-    "Removing Firewall Rules",
-    "Removing Folder Structures"
-)
+# The S2D data disks created by 00_Infra_AzHCI.ps1 do not carry the VM name
+$HCIExtraDiskPatterns = @("s2d*.vhdx")
 
-$totalTasks      = $tasks.Count
-$currentTask     = 0
 $skipNetworking  = $false
 
 #endregion
@@ -76,11 +88,20 @@ function Write-Message {
     }
 }
 
+# Returns $true when a path is inside the lab root folder (guards every file deletion)
+function Test-InLabFolder {
+    param ([string]$Path)
+    $root = [System.IO.Path]::GetFullPath($HCIRootFolder).TrimEnd('\') + '\'
+    return [System.IO.Path]::GetFullPath($Path).StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 # Function to Remove VMs and Associated Resources
 function Remove-VMResources {
     param (
         [string]$VMName,
-        [string]$DiskFolder
+        [string]$DiskFolder,
+        [string]$VMFolder,
+        [string[]]$ExtraDiskPatterns = @()
     )
 
     # Suppress non-critical outputs within the function
@@ -90,8 +111,12 @@ function Remove-VMResources {
     $ProgressPreference = 'SilentlyContinue'
 
     # Stop and remove the VM if it exists
+    $diskPaths = @()
     $vm = Get-VM -Name $VMName -ErrorAction SilentlyContinue
     if ($null -ne $vm) {
+        # Record the attached disks before the VM is removed, so every one of them is deleted
+        $diskPaths = @(Get-VMHardDiskDrive -VMName $VMName -ErrorAction SilentlyContinue | Where-Object { $_.Path } | ForEach-Object { $_.Path })
+
         if ($vm.State -in @('Running', 'Paused', 'Suspended')) {
             try {
                 Stop-VM -Name $VMName -TurnOff -ErrorAction Stop | Out-Null
@@ -110,35 +135,101 @@ function Remove-VMResources {
             Write-Message "Failed to remove VM '$VMName'. Error: $_" -Type "Error"
             return
         }
+    } else {
+        Write-Message "VM '$VMName' does not exist. Checking for leftover disks and folders." -Type "Warning"
+    }
 
-        # Remove VHD files
-        $vhdFiles = Get-ChildItem -Path $DiskFolder -Filter "$VMName*.vhdx" -Recurse -ErrorAction SilentlyContinue
-        foreach ($vhd in $vhdFiles) {
+    # Remove VHD files: the disks that were attached, plus files matching the lab naming convention
+    $patterns = @("$VMName*.vhdx") + $ExtraDiskPatterns
+    foreach ($pattern in $patterns) {
+        $diskPaths += @(Get-ChildItem -Path $DiskFolder -Filter $pattern -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+    }
+    foreach ($path in ($diskPaths | Sort-Object -Unique)) {
+        if (-not (Test-InLabFolder $path)) {
+            Write-Message "Disk '$path' is outside '$HCIRootFolder'. Not deleted; remove it manually if needed." -Type "Warning"
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        try {
+            Remove-Item -LiteralPath $path -Force -ErrorAction Stop | Out-Null
+            Write-Message "VHD file '$path' deleted." -Type "Success"
+        } catch {
+            Write-Message "Failed to delete VHD file '$path'. Error: $_" -Type "Error"
+        }
+    }
+
+    # Remove the VM folder created by New-VM -Path
+    if ($VMFolder) {
+        $vmPath = Join-Path -Path $VMFolder -ChildPath $VMName
+        if ((Test-Path -LiteralPath $vmPath) -and (Test-InLabFolder $vmPath)) {
             try {
-                Remove-Item -Path $vhd.FullName -Force -ErrorAction Stop | Out-Null
-                Write-Message "VHD file '$($vhd.FullName)' deleted." -Type "Success"
+                Remove-Item -LiteralPath $vmPath -Recurse -Force -ErrorAction Stop | Out-Null
+                Write-Message "VM folder '$vmPath' deleted." -Type "Success"
             } catch {
-                Write-Message "Failed to delete VHD file '$($vhd.FullName)'. Error: $_" -Type "Error"
+                Write-Message "Failed to delete VM folder '$vmPath'. Error: $_" -Type "Error"
             }
         }
+    }
 
-        # Remove HgsGuardian if it exists
+    # Remove HgsGuardian if it exists
+    if (Get-HgsGuardian -Name $VMName -ErrorAction SilentlyContinue) {
         try {
-            Remove-HgsGuardian -Name $VMName -ErrorAction SilentlyContinue -WarningAction SilentlyContinue | Out-Null
+            Remove-HgsGuardian -Name $VMName -ErrorAction Stop -WarningAction SilentlyContinue | Out-Null
             Write-Message "HgsGuardian '$VMName' removed." -Type "Success"
         } catch {
             Write-Message "Failed to remove HgsGuardian '$VMName'. Error: $_" -Type "Error"
         }
-    } else {
-        Write-Message "VM '$VMName' does not exist. Skipping removal." -Type "Warning"
     }
-
-    # Reset preferences to default
-    $ErrorActionPreference = 'Continue'
-    $WarningPreference = 'Continue'
-    $VerbosePreference = 'Continue'
-    $ProgressPreference = 'Continue'
 }
+
+#endregion
+
+#region Mode Selection
+
+if (-not $Mode) {
+    Write-Host ""
+    Write-Message "Select what to remove:" -Type "Info"
+    Write-Message "  1  Everything  (VMs '$HCIVMName' and '$DCVMName', NAT, virtual switch, firewall rules and '$HCIRootFolder')" -Type "Info"
+    Write-Message "  2  Node only   (VM '$HCIVMName' with its disks and folder; DC '$DCVMName', networking and the lab folder stay)" -Type "Info"
+    Write-Message "  0  Cancel" -Type "Info"
+    Write-Host ""
+
+    do {
+        $modeInput = Read-Host "Enter choice (0, 1 or 2)"
+    } while ($modeInput -notin @("0","1","2"))
+
+    if ($modeInput -eq "0") {
+        Write-Message "Offboarding cancelled. Nothing was changed." -Type "Warning"
+        return
+    }
+    $Mode = if ($modeInput -eq "1") { 'All' } else { 'NodeOnly' }
+}
+
+if ($Mode -eq 'NodeOnly' -and $HCIVMName -eq $DCVMName) {
+    throw "The node and DC names are the same ('$HCIVMName'). Check AZSHCI_HCI_VM_NAME and AZSHCI_DC_VM_NAME in .env."
+}
+
+if ($Mode -eq 'All') {
+    Write-Message "Mode: Everything selected." -Type "Success"
+    $tasks = @(
+        "Stopping and Removing HCI Node VM",
+        "Stopping and Removing Domain Controller VM",
+        "Removing NAT Configuration",
+        "Removing IP Addresses from Virtual Switch Interface",
+        "Removing Virtual Switch",
+        "Removing Firewall Rules",
+        "Removing Folder Structures"
+    )
+} else {
+    Write-Message "Mode: Node only selected. '$DCVMName', networking and '$HCIRootFolder' are kept." -Type "Success"
+    $tasks = @(
+        "Stopping and Removing HCI Node VM"
+    )
+}
+Write-Host ""
+
+$totalTasks  = $tasks.Count
+$currentTask = 0
 
 #endregion
 
@@ -150,10 +241,10 @@ foreach ($task in $tasks) {
 
     switch ($task) {
         "Stopping and Removing HCI Node VM" {
-            Remove-VMResources -VMName $HCIVMName -DiskFolder $HCIDiskFolder
+            Remove-VMResources -VMName $HCIVMName -DiskFolder $HCIDiskFolder -VMFolder $HCIVMFolder -ExtraDiskPatterns $HCIExtraDiskPatterns
         }
         "Stopping and Removing Domain Controller VM" {
-            Remove-VMResources -VMName $DCVMName -DiskFolder $HCIDiskFolder
+            Remove-VMResources -VMName $DCVMName -DiskFolder $HCIDiskFolder -VMFolder $HCIVMFolder
         }
         "Removing NAT Configuration" {
             # Check if the switch is still attached to any VM before touching networking
@@ -268,6 +359,12 @@ foreach ($task in $tasks) {
 # Complete the Progress Bar
 Write-Progress -Activity "Cleaning Up Configurations" -Completed -Status "All tasks completed."
 
-Write-Message "Cleanup completed successfully." -Type "Success"
+if ($Mode -eq 'NodeOnly') {
+    Write-Message "Node '$HCIVMName' removed. Kept: DC '$DCVMName', virtual switch '$vSwitchName', NAT '$natName', firewall rules and '$HCIRootFolder'." -Type "Success"
+    Write-Message "Azure resources and the node's Active Directory and DNS records were not touched." -Type "Info"
+    Write-Message "To redeploy the node, run 00_Infra_AzHCI.ps1 (it skips the existing switch, NAT and DC) and then 02_Cluster.ps1." -Type "Info"
+} else {
+    Write-Message "Cleanup completed successfully." -Type "Success"
+}
 
 #endregion
